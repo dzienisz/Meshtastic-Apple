@@ -54,6 +54,8 @@ private struct NodeInfoHardwareSection: View {
 	let summary: NodeInfoItemSummary
 	@Query private var hardware: [DeviceHardwareEntity]
 	@EnvironmentObject private var meshtasticAPI: MeshtasticAPI
+	/// The 3D model for this hardware, worked out off the layout pass like the device image.
+	@State private var deviceModelFile: String?
 
 	init(summary: NodeInfoItemSummary) {
 		self.summary = summary
@@ -78,7 +80,19 @@ private struct NodeInfoHardwareSection: View {
 
 	private var supportRosette: some View {
 		Image(systemName: isActivelySupported ? "checkmark.seal.fill" : "xmark.seal.fill")
-			.foregroundStyle(isActivelySupported ? .green : .secondary)
+			.foregroundStyle(isActivelySupported ? Color.tierSupported : .secondary)
+	}
+
+	/// The rung's color for the section heading, per meshtastic/design#160. Legacy, discontinued
+	/// and unknown hardware keep the plain heading.
+	private var tierColor: Color? {
+		if isPortduino { return .tierCommunity }
+		switch displayTier {
+		case .supported: return .tierSupported
+		case .maker: return .tierMaker
+		case .niche: return .tierCommunity
+		default: return nil
+		}
 	}
 
 	private var modelName: String {
@@ -93,6 +107,14 @@ private struct NodeInfoHardwareSection: View {
 		hardwarePresentation?.supportLevel
 	}
 
+	private var displayTier: HardwareDisplayTier? {
+		guard let supportLevel else { return nil }
+		return HardwareDisplayTier.resolve(
+			supportLevel: supportLevel,
+			isMaker: hardwarePresentation?.isMaker ?? false
+		)
+	}
+
 	private var hardwareDescription: String {
 		if let supportLevel {
 			return supportLevel.description
@@ -103,23 +125,36 @@ private struct NodeInfoHardwareSection: View {
 	}
 
 	private var sectionTitle: String {
-		if summary.hwModel == "UNSET" { return "Hardware" }
-		if isPortduino { return "Community Hardware" }
-		guard let supportLevel else { return "Hardware" }
-		switch supportLevel {
-		case .flagship:
-			return "Supported Hardware"
+		if summary.hwModel == "UNSET" { return String(localized: "Hardware") }
+		if isPortduino { return String(localized: "Community Hardware") }
+		guard let displayTier else { return String(localized: "Hardware") }
+		switch displayTier {
+		case .supported:
+			return String(localized: "Supported Hardware")
+		case .maker:
+			return String(localized: "Maker Hardware")
 		case .niche:
-			return "Niche Hardware"
+			return String(localized: "Niche Hardware")
 		case .legacy:
-			return "Legacy Hardware"
+			return String(localized: "Legacy Hardware")
 		case .discontinued:
-			return "Discontinued Hardware"
+			return String(localized: "Discontinued Hardware")
+		}
+	}
+
+	/// The device image, or its 3D model where there is one and RealityView is available.
+	@ViewBuilder
+	private var heroImage: some View {
+		let image = DeviceHardwareImage(hwId: Int32(summary.hwModelId))
+		if let deviceModelFile, #available(iOS 18.0, macCatalyst 18.0, *) {
+			DeviceModelView(modelName: deviceModelFile, deviceName: modelName) { image }
+		} else {
+			image
 		}
 	}
 
 	var body: some View {
-		Section(sectionTitle) {
+		Section {
 			if summary.hwModel == "UNSET" {
 				// MARK: - Unset / Incomplete
 				HStack {
@@ -139,11 +174,28 @@ private struct NodeInfoHardwareSection: View {
 						.foregroundStyle(.secondary)
 				}
 				.listRowSeparator(.hidden)
-			} else if hasDevice && supportLevel == .flagship {
+			} else if hasDevice && !isPortduino && displayTier == .maker {
+				// MARK: - Maker Device
+				HStack(spacing: 16) {
+					DeviceHardwareImage(hwId: Int32(summary.hwModelId))
+						.frame(width: 60, height: 60)
+						.cornerRadius(8)
+					Text(modelName)
+						.font(.subheadline)
+					Spacer()
+					supportRosette
+						.font(.title2)
+					Image(systemName: "wrench.adjustable")
+						.font(.title2)
+						.foregroundStyle(Color.tierMaker)
+						.accessibilityLabel(String(localized: "Maker", comment: "Accessibility name for the maker hardware mark"))
+				}
+				.listRowSeparator(.hidden)
+			} else if hasDevice && displayTier == .supported {
 				// MARK: - Flagship Device (Hero Layout)
 				VStack(spacing: 12) {
 					ZStack(alignment: .bottomTrailing) {
-						DeviceHardwareImage(hwId: Int32(summary.hwModelId))
+						heroImage
 							.frame(maxWidth: .infinity)
 							.frame(height: 200)
 							.cornerRadius(12)
@@ -156,7 +208,7 @@ private struct NodeInfoHardwareSection: View {
 						.frame(maxWidth: .infinity, alignment: .center)
 				}
 				.listRowSeparator(.hidden)
-			} else if hasDevice && (supportLevel == .niche || supportLevel == .legacy) {
+			} else if hasDevice && (displayTier == .niche || displayTier == .legacy) {
 				// MARK: - Niche / Legacy Device
 				HStack(spacing: 16) {
 					DeviceHardwareImage(hwId: Int32(summary.hwModelId))
@@ -213,8 +265,14 @@ private struct NodeInfoHardwareSection: View {
 				}
 				.listRowSeparator(.hidden)
 			}
+		} header: {
+			Text(sectionTitle)
+				.foregroundStyle(tierColor ?? .secondary)
 		}
 		.accessibilityElement(children: .combine)
+		.task(id: hardware.map(\.platformioTarget)) {
+			deviceModelFile = DeviceModelCatalog.modelName(for: summary.hwModelId, in: hardware)
+		}
 
 		// Device links section (shown only when device has a platformioTarget)
 		if let target = hardwarePresentation?.platformioTarget {

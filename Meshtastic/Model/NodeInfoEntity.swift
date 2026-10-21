@@ -14,9 +14,23 @@ final class NodeInfoEntity {
 	var channel: Int32 = 0
 	var favorite: Bool = false
 	var firstHeard: Date?
+	/// True once an admin response carrying a session passkey has been received from this node,
+	/// correlated to a request this app sent (response variant, requestID set, addressed to the
+	/// connected node) — proof that an admin request we sent succeeded at least once. Set on
+	/// ingest (`MeshPackets.adminAppPacket`), carried through backup restore, never cleared.
+	var hasBeenAdministered: Bool = false
 	/// True when this node signs its broadcast packets via XEdDSA and the radio has verified at least one
 	/// (NodeInfo.has_xeddsa_signed, field 14). Observed automatic trust — not a configurable setting.
 	var hasXeddsaSigned: Bool = false
+	/// True when the user verified this node's key in person — an in-person contact QR exchange
+	/// (SharedContact.manually_verified) or the radio's own verification flow. Reported by the
+	/// connected radio's node DB (NodeInfo.is_key_manually_verified); the radio owns the flag.
+	var isKeyManuallyVerified: Bool = false
+	/// Whether the connected radio has heard this node over RF on the LoRa settings it is using now
+	/// (NodeInfo.heard_on_current_lora, firmware 2.8.1+, meshtastic/design#146). Nil when unknown:
+	/// older firmware never sends it and a proto3 bool reads false when absent, so it is only stored
+	/// from a radio known to send it.
+	var heardOnCurrentLora: Bool?
 	var hopsAway: Int32 = 0
 	var id: Int64 = 0
 	var ignored: Bool = false
@@ -125,9 +139,6 @@ final class NodeInfoEntity {
 	@Relationship(deleteRule: .nullify, inverse: \TAKConfigEntity.takConfigNode)
 	var takConfig: TAKConfigEntity?
 
-	@Relationship(deleteRule: .nullify, inverse: \TrafficManagementConfigEntity.trafficManagementConfigNode)
-	var trafficManagementConfig: TrafficManagementConfigEntity?
-
 	@Relationship(deleteRule: .nullify, inverse: \TelemetryEntity.nodeTelemetry)
 	var telemetries: [TelemetryEntity] = []
 
@@ -166,6 +177,39 @@ extension NodeInfoEntity {
 		let liveNodes = nodes.filter { $0.modelContext != nil && !$0.isDeleted }
 		return liveNodes.filter(\.favorite) + liveNodes.filter { !$0.favorite }
 	}
+
+	/// True while the node's admin session is usable for a remote admin write: a non-empty
+	/// session passkey inside the firmware's 5-minute session window. Empty-passkey stamps
+	/// (from the local config download and post-save mirrors) don't count.
+	var hasLiveAdminSession: Bool {
+		sessionPasskey?.isEmpty == false && (sessionExpiration ?? .distantPast) >= Date()
+	}
+
+	/// This node's own reported firmware version, when it has told us one. Under remote
+	/// admin this is the target's version, which is not the connected radio's.
+	var knownFirmwareVersion: String? {
+		guard let version = metadata?.firmwareVersion, !version.isEmpty else { return nil }
+		return version
+	}
+
+	/// Whether this node's own reported firmware is at least `version`. Permissive when
+	/// the node has never reported one, matching the capability gates' unknown-version
+	/// behavior.
+	func firmwareAtLeast(_ version: String) -> Bool {
+		Self.firmware(knownFirmwareVersion, isAtLeast: version)
+	}
+
+	/// The one version comparison, for callers that hold a reported version rather than
+	/// the entity: the settings list works from a snapshot. A nil or empty `reported`
+	/// means the node has never said, and every gate is permissive there.
+	static func firmware(_ reported: String?, isAtLeast required: String) -> Bool {
+		guard let reported, !reported.isEmpty else { return true }
+		return required.compare(reported, options: .numeric) != .orderedDescending
+	}
+
+	/// Whether this node's own reported firmware supports the Status Message module (2.8+,
+	/// the same floor as `AccessoryManager.supportsStatusMessage`).
+	var firmwareSupportsStatusMessage: Bool { firmwareAtLeast("2.8.0") }
 
 	/// The status message to render on read-only surfaces (node list card and node
 	/// details). Prefers the live broadcast value (`nodeStatus`, NODE_STATUS_APP) and

@@ -68,6 +68,9 @@ struct NodeListItemCompact: View {
 		} else {
 			desc += ", offline"
 		}
+		if summary.isUnheardOnCurrentLora {
+			desc += ", " + UnheardOnCurrentLora.label
+		}
 		if let roleName = summary.role?.name {
 			desc += ", role: \(roleName)"
 		}
@@ -112,7 +115,7 @@ struct NodeListItemCompact: View {
 			}
 			desc += ", " + signalString
 		}
-		// Mirror the visual "Signed node" shield (rendered below) so VoiceOver announces it in the
+		// The signing state shows only as the glyph beside the name, so VoiceOver announces it in the
 		// compact list too — affirmative only, never for unsigned nodes.
 		if summary.hasXeddsaSigned {
 			desc += ", " + "Signed node".localized
@@ -124,6 +127,7 @@ struct NodeListItemCompact: View {
 		// Memoized value-type snapshot; rendered from instead of re-reading the live @Model on every
 		// body re-evaluation, so a retained row can't fault on a deleted/zombie node. See NodeListItem.
 		@State private var rowSummary: NodeListRowSummary?
+		@State private var refreshGate = NodeListRowRefreshGate()
 		var isDirectlyConnected: Bool
 		var connectedNode: Int64
 	var modemPreset: ModemPresets = ModemPresets(rawValue: UserDefaults.modemPreset) ?? ModemPresets.longFast
@@ -154,13 +158,6 @@ struct NodeListItemCompact: View {
 			lines += 1
 		}
 
-		// The signed-node ("Signed node") row renders on its own line whenever the node is signed,
-		// so reserve space for it too — otherwise the avatar circle is sized too short for signed
-		// nodes, most visibly when last-heard / telemetry rows are disabled.
-		if hasXeddsaSigned {
-			lines += 1
-		}
-
 		// Note: the status row's contribution is added by the caller via the resolved
 		// `statusMessage` value, so `node.statusMessageDisplay` is evaluated only once.
 		return lines
@@ -171,17 +168,19 @@ struct NodeListItemCompact: View {
 		// the live @Model, so a row retained past the node's deletion (bulk deletes leave zombies
 		// that `isDeleted` doesn't flag) can't fault. Only the first appearance reads the live node,
 		// and only while it's still valid. See NodeListItem for the full explanation.
-		if let rowSummary {
-			rowContent(rowSummary)
-		} else if node.modelContext != nil && !node.isDeleted {
-			let summary = NodeListRowSummary(
+		if rowSummary != nil || (node.modelContext != nil && !node.isDeleted) {
+			let summary = rowSummary ?? NodeListRowSummary(
 				node: node,
 				includeDeviceMetrics: shouldShowPower || shouldShowTelemetry,
 				includePosition: shouldShowTelemetry || (shouldShowLocation && connectedNode != node.num),
 				includeLogAvailability: shouldShowTelemetry
 			)
 			rowContent(summary)
-				.onAppear { rowSummary = summary }
+				.onAppear {
+					if rowSummary == nil {
+						rowSummary = summary
+					}
+				}
 		} else {
 			EmptyView()
 		}
@@ -218,7 +217,7 @@ struct NodeListItemCompact: View {
 				// Second Column
 				VStack(alignment: .leading, spacing: rowSpacing) {
 					HStack(alignment: .firstTextBaseline) {
-						let (image, color) = summary.keyStatus
+						let (image, color) = summary.keyStatus(isConnectedNode: isDirectlyConnected)
 						IconAndText(systemName: image,
 									imageColor: color,
 									text: summary.displayLongName.addingVariationSelectors,
@@ -228,13 +227,6 @@ struct NodeListItemCompact: View {
 							Image(systemName: "star.fill")
 								.symbolRenderingMode(.multicolor)
 						}
-					}
-					// Signed node = XEdDSA-signed NodeInfo broadcast → identity verified by the radio.
-					// Affirmative only; never shown for unsigned nodes. Mirrors the Node Detail row.
-					if summary.hasXeddsaSigned {
-						IconAndText(systemName: "checkmark.shield.fill",
-									imageColor: .green,
-									text: "Signed node".localized)
 					}
 					// User-authored status broadcast by the node, directly beneath the name.
 					// Single-line clamp keeps the compact row dense; omitted when empty.
@@ -259,6 +251,13 @@ struct NodeListItemCompact: View {
 							systemName: summary.isOnline ? "checkmark.circle.fill" : "moon.circle.fill",
 							imageColor: summary.isOnline ? .green : .orange,
 							text: lastHeardText ?? "Unknown Age".localized
+						)
+					}
+					if summary.isUnheardOnCurrentLora {
+						IconAndText(
+							systemName: UnheardOnCurrentLora.systemImage,
+							imageColor: .secondary,
+							text: UnheardOnCurrentLora.shortLabel
 						)
 					}
 					// Distance, bearing, hops, signal, role, telemetry row
@@ -343,11 +342,15 @@ struct NodeListItemCompact: View {
 		}
 			.padding(.top, 2)
 			.padding(.bottom, 2)
-			// Gate the identity on liveness too: `.task(id:)` reads `node.lastHeard` during body
-			// construction, which would fault on an invalidated model before the body's guard runs.
-			.task(id: (node.modelContext != nil && !node.isDeleted) ? node.lastHeard : nil) {
+			// Gate the identity on liveness too: `.task(id:)` reads the node during body construction,
+			// which would fault on an invalidated model before the body's guard runs.
+			.task(id: (node.modelContext != nil && !node.isDeleted) ? NodeRowRefreshKey(node) : nil) {
 				// Refresh the snapshot when the node changes, but only while it is still live.
 				guard node.modelContext != nil && !node.isDeleted else { return }
+				// The initial snapshot was just built synchronously; later task runs represent a
+				// last-heard or heard-on-current-LoRa change, or the row reappearing, and must refresh
+				// all snapshotted fields.
+				guard refreshGate.shouldRefresh() else { return }
 				rowSummary = NodeListRowSummary(
 					node: node,
 					includeDeviceMetrics: shouldShowPower || shouldShowTelemetry,

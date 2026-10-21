@@ -9,6 +9,15 @@ import SwiftUI
 import CoreLocation
 import Foundation
 
+struct NodeListRowRefreshGate {
+	private var hasRunTask = false
+
+	mutating func shouldRefresh() -> Bool {
+		defer { hasRunTask = true }
+		return hasRunTask
+	}
+}
+
 /// A complete, value-type snapshot of everything a node-list row renders, captured from the live
 /// `NodeInfoEntity` (and its `user` relationship) while it is valid.
 ///
@@ -17,12 +26,28 @@ import Foundation
 /// backing row has been removed. Bulk deletes (`clearStaleNodes`, `clearDatabase`'s
 /// `delete(model:)`) invalidate in-memory instances *without* flipping `isDeleted`, so a retained
 /// List row that re-evaluates its body before the List drops it reads a zombie and crashes — the
-/// top crash on 2.7.15 (NodeListItem/NodeListItemCompact, ~48% of crashes).
+/// top crash on 2.7.15 (NodeListItem/NodeListItemCompact).
 ///
 /// The row memoizes one of these snapshots in `@State` (see `NodeListItem.body`) and renders from
 /// it, so a re-evaluation after the model dies never touches the live object. Value types can't
 /// fault.
+/// What a node row watches to rebuild its snapshot: the last-heard time, and the radio's answer on
+/// whether it heard the node on the current LoRa settings, which can change without a new packet.
+struct NodeRowRefreshKey: Equatable {
+	let lastHeard: Date?
+	let heardOnCurrentLora: Bool?
+
+	@MainActor init(_ node: NodeInfoEntity) {
+		lastHeard = node.lastHeard
+		heardOnCurrentLora = node.heardOnCurrentLora
+	}
+}
+
 struct NodeListRowSummary {
+	#if DEBUG
+	@MainActor static var testInitializationObserver: (() -> Void)?
+	#endif
+
 	// Identity / name
 	let num: Int64
 	let shortName: String?
@@ -35,9 +60,14 @@ struct NodeListRowSummary {
 	// Node scalars
 	let favorite: Bool
 	let hasXeddsaSigned: Bool
+	let isKeyManuallyVerified: Bool
+	let firmwareVersion: String?
 	let statusMessage: String?
 	let lastHeard: Date?
 	let isOnline: Bool
+	/// Not heard over RF on the radio's current LoRa settings (firmware 2.8.1+). A different claim
+	/// from offline, so the row shows it separately.
+	let isUnheardOnCurrentLora: Bool
 	let hopsAway: Int32
 	let snr: Float
 	let rssi: Int32
@@ -61,6 +91,10 @@ struct NodeListRowSummary {
 		includePosition: Bool = true,
 		includeLogAvailability: Bool = true
 	) {
+		#if DEBUG
+		Self.testInitializationObserver?()
+		#endif
+
 		num = node.num
 		let user = node.user
 		shortName = user?.shortName
@@ -72,9 +106,12 @@ struct NodeListRowSummary {
 
 		favorite = node.favorite
 		hasXeddsaSigned = node.hasXeddsaSigned
+		isKeyManuallyVerified = node.isKeyManuallyVerified
+		firmwareVersion = node.metadata?.firmwareVersion
 		statusMessage = node.statusMessageDisplay
 		lastHeard = node.lastHeard
 		isOnline = node.isOnline
+		isUnheardOnCurrentLora = node.isUnheardOnCurrentLora
 		hopsAway = node.hopsAway
 		snr = node.snr
 		rssi = node.rssi
@@ -93,13 +130,18 @@ struct NodeListRowSummary {
 		hasTraceRoutes = includeLogAvailability ? node.hasTraceRoutes : false
 	}
 
-	/// The lock/key glyph and color for the node's PKI state — derived from the snapshot so the row
-	/// never re-reads `node.user` at render time.
-	var keyStatus: (image: String, color: Color) {
-		if pkiEncrypted {
-			return keyMatch ? ("lock.fill", .green) : ("key.slash", .red)
-		}
-		return ("lock.open.fill", .yellow)
+	/// The security glyph and color for the row — signing state on 2.8+, PKI locks below,
+	/// a mismatch warning at any version. Derived from the snapshot so the row never re-reads
+	/// `node.user` at render time.
+	func keyStatus(isConnectedNode: Bool = false) -> (image: String, color: Color) {
+		NodeSecurityIndicator.status(
+			firmwareVersion: firmwareVersion,
+			pkiEncrypted: pkiEncrypted,
+			keyMatch: keyMatch,
+			signed: hasXeddsaSigned,
+			verified: isKeyManuallyVerified,
+			isOwnNode: isConnectedNode
+		).glyph
 	}
 }
 
@@ -146,6 +188,9 @@ struct NodeListItem: View {
 		} else {
 			desc += ", offline"
 		}
+		if summary.isUnheardOnCurrentLora {
+			desc += ", " + UnheardOnCurrentLora.label
+		}
 		if let roleName = summary.role?.name {
 			desc += ", role: \(roleName)"
 		}
@@ -190,7 +235,7 @@ struct NodeListItem: View {
 			}
 			desc += ", " + signalString
 		}
-		// Mirror the visual "Signed node" trust signal (see the shield row below) so VoiceOver
+		// The signing state shows only as the glyph beside the name, so VoiceOver
 		// announces it too — affirmative only, never for unsigned nodes.
 		if summary.hasXeddsaSigned {
 			desc += ", " + "Signed node".localized
@@ -203,6 +248,7 @@ struct NodeListItem: View {
 	/// never re-derived from the live model during a plain re-evaluation, so a retained row can't
 	/// fault on a zombie @Model. Refreshed (guarded) when the node's `lastHeard` changes.
 	@State private var rowSummary: NodeListRowSummary?
+	@State private var refreshGate = NodeListRowRefreshGate()
 	var isDirectlyConnected: Bool
 	var connectedNode: Int64
 	var modemPreset: ModemPresets = ModemPresets(rawValue: UserDefaults.modemPreset) ?? ModemPresets.longFast
@@ -228,12 +274,14 @@ struct NodeListItem: View {
 		// @Model, so a row retained past the node's deletion (nodes/positions are pruned constantly;
 		// bulk deletes leave zombies that `isDeleted` doesn't flag) can't fault. Only the first
 		// appearance reads the live node, and only while it's still valid.
-		if let rowSummary {
-			rowContent(rowSummary)
-		} else if node.modelContext != nil && !node.isDeleted {
-			let summary = NodeListRowSummary(node: node)
+		if rowSummary != nil || (node.modelContext != nil && !node.isDeleted) {
+			let summary = rowSummary ?? NodeListRowSummary(node: node)
 			rowContent(summary)
-				.onAppear { rowSummary = summary }
+				.onAppear {
+					if rowSummary == nil {
+						rowSummary = summary
+					}
+				}
 		} else {
 			EmptyView()
 		}
@@ -266,7 +314,7 @@ struct NodeListItem: View {
 				}
 				VStack(alignment: .leading) {
 					HStack {
-						let (image, color) = summary.keyStatus
+						let (image, color) = summary.keyStatus(isConnectedNode: isDirectlyConnected)
 						IconAndText(systemName: image,
 									imageColor: color,
 									text: summary.displayLongName.addingVariationSelectors,
@@ -276,13 +324,6 @@ struct NodeListItem: View {
 							Image(systemName: "star.fill")
 								.symbolRenderingMode(.multicolor)
 						}
-					}
-					// Signed node = XEdDSA-signed NodeInfo broadcast → identity verified by the radio.
-					// Affirmative only; never shown for unsigned nodes. Mirrors the Node Detail row.
-					if summary.hasXeddsaSigned {
-						IconAndText(systemName: "checkmark.shield.fill",
-									imageColor: .green,
-									text: "Signed node".localized)
 					}
 					// User-authored status broadcast by the node — shown directly beneath the
 					// name, clamped to 2 lines so it can never grow the card unbounded. Omitted
@@ -305,12 +346,17 @@ struct NodeListItem: View {
 									imageColor: summary.isOnline ? .green : .orange,
 							text: summary.lastHeard?.formatted(date: .numeric, time: .shortened) ?? "Unknown Age".localized)
 					}
+					if summary.isUnheardOnCurrentLora {
+						IconAndText(systemName: UnheardOnCurrentLora.systemImage,
+									imageColor: .secondary,
+									text: UnheardOnCurrentLora.shortLabel)
+					}
 					IconAndText(systemName: summary.role?.systemName ?? "figure",
-								text: "Role: \(summary.role?.name ?? "Unknown".localized)")
+								text: String(localized: "Role: \(summary.role?.name ?? "Unknown".localized)"))
 					if summary.unmessagable {
 						IconAndText(systemName: "iphone.slash",
 									renderingMode: .multicolor,
-									text: "Unmonitored")
+									text: "Unmonitored".localized)
 					}
 					if summary.isStoreForwardRouter {
 						IconAndText(systemName: "envelope.arrow.triangle.branch",
@@ -345,7 +391,7 @@ struct NodeListItem: View {
 					}
 					HStack {
 						if summary.channel > 0 {
-							IconAndText(systemName: "\(summary.channel).circle.fill", text: "Channel")
+							IconAndText(systemName: "\(summary.channel).circle.fill", text: "Channel".localized)
 						}
 
 						if summary.viaMqtt && connectedNode != summary.num {
@@ -356,7 +402,7 @@ struct NodeListItem: View {
 					}
 					if cachedHasLogs {
 						HStack {
-							IconAndText(systemName: "scroll", text: "Logs:")
+							IconAndText(systemName: "scroll", text: "Logs:".localized)
 							if cachedHasDeviceMetrics {
 								DefaultIcon(systemName: "flipphone")
 							}
@@ -376,7 +422,7 @@ struct NodeListItem: View {
 					}
 					if summary.hopsAway > 0 {
 						HStack {
-							IconAndText(systemName: "hare", text: "Hops Away:")
+							IconAndText(systemName: "hare", text: "Hops Away:".localized)
 							Image(systemName: "\(summary.hopsAway).square")
 								.font(.title2)
 						}
@@ -392,11 +438,15 @@ struct NodeListItem: View {
 		}
 		.padding(.top, 3)
 		.padding(.bottom, 3)
-		// Gate the identity on liveness too: `.task(id:)` reads `node.lastHeard` during body
-		// construction, which would fault on an invalidated model before the body's guard runs.
-		.task(id: (node.modelContext != nil && !node.isDeleted) ? node.lastHeard : nil) {
+		// Gate the identity on liveness too: `.task(id:)` reads the node during body construction,
+		// which would fault on an invalidated model before the body's guard runs.
+		.task(id: (node.modelContext != nil && !node.isDeleted) ? NodeRowRefreshKey(node) : nil) {
 			// Refresh the snapshot when the node changes, but only while it is still live.
 			guard node.modelContext != nil && !node.isDeleted else { return }
+			// The initial snapshot was just built synchronously; later task runs represent a
+			// last-heard or heard-on-current-LoRa change, or the row reappearing, and must refresh
+			// all snapshotted fields.
+			guard refreshGate.shouldRefresh() else { return }
 			rowSummary = NodeListRowSummary(node: node)
 		}
 		.accessibilityElement(children: .ignore)
@@ -461,13 +511,20 @@ struct IconAndText: View {
 	let text: String
 	var textColor: Color = .gray
 
+	/// System symbol when the name resolves, custom symbol from the asset catalog otherwise
+	/// (custom.link.slash, radio.badge.shield.checkmark, ...). Custom symbols follow the same
+	/// template pipeline, so rendering mode and color apply either way.
+	private var symbolImage: Image {
+		UIImage(systemName: systemName) != nil ? Image(systemName: systemName) : Image(systemName)
+	}
+
 	@ViewBuilder
 	var image: some View {
 		if let color = imageColor {
-			Image(systemName: systemName)
+			symbolImage
 				.foregroundColor(color)
 		} else {
-			Image(systemName: systemName)
+			symbolImage
 		}
 	}
 

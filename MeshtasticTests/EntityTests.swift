@@ -32,7 +32,8 @@ struct HardwareCatalogPresentationTests {
 		displayName: String,
 		activelySupported: Bool,
 		supportLevel: SupportLevel,
-		architecture: String? = nil
+		architecture: String? = nil,
+		isMaker: Bool = false
 	) -> HardwareCatalogRecord {
 		HardwareCatalogRecord(
 			hwModel: model,
@@ -41,7 +42,8 @@ struct HardwareCatalogPresentationTests {
 			displayName: displayName,
 			activelySupported: activelySupported,
 			supportLevel: supportLevel,
-			architecture: architecture
+			architecture: architecture,
+			isMaker: isMaker
 		)
 	}
 
@@ -101,6 +103,60 @@ struct HardwareCatalogPresentationTests {
 		#expect(record.hwModelSlug == nil)
 		#expect(record.platformioTarget == nil)
 		#expect(record.displayName == nil)
+		#expect(entity.isMaker == false)
+		#expect(record.isMaker == false)
+	}
+
+	@Test func presentationCopiesMakerFlagFromTheRecordItSelected() {
+		// Same hwModel, neither target is the slug's canonical name, so preference
+		// (support level, then active support) chooses, and the flag rides along.
+		let makerFlagship = record(
+			model: 148,
+			slug: "SHARED_MODEL",
+			target: "shared-model-maker",
+			displayName: "Maker Board",
+			activelySupported: true,
+			supportLevel: .flagship,
+			isMaker: true
+		)
+		let legacy = record(
+			model: 148,
+			slug: "SHARED_MODEL",
+			target: "shared-model-legacy",
+			displayName: "Legacy Board",
+			activelySupported: true,
+			supportLevel: .legacy,
+			isMaker: false
+		)
+
+		let makerWins = HardwareCatalogResolver.presentation(for: 148, in: [legacy, makerFlagship])
+		#expect(makerWins?.displayName == "Maker Board")
+		#expect(makerWins?.supportLevel == .flagship)
+		#expect(makerWins?.isMaker == true)
+
+		let partnerFlagship = record(
+			model: 148,
+			slug: "SHARED_MODEL",
+			target: "shared-model-partner",
+			displayName: "Partner Board",
+			activelySupported: false,
+			supportLevel: .flagship,
+			isMaker: false
+		)
+		let makerLegacy = record(
+			model: 148,
+			slug: "SHARED_MODEL",
+			target: "shared-model-maker-legacy",
+			displayName: "Maker Legacy",
+			activelySupported: true,
+			supportLevel: .legacy,
+			isMaker: true
+		)
+		let partnerWins = HardwareCatalogResolver.presentation(for: 148, in: [makerLegacy, partnerFlagship])
+		#expect(partnerWins?.displayName == "Partner Board")
+		#expect(partnerWins?.supportLevel == .flagship)
+		#expect(partnerWins?.activelySupported == false)
+		#expect(partnerWins?.isMaker == false)
 	}
 
 	@Test func usesRawStringOrderingForEqualPriorityRecords() {
@@ -183,6 +239,38 @@ struct HardwareCatalogPresentationTests {
 	}
 }
 
+@Suite("Hardware display tier")
+struct HardwareDisplayTierTests {
+
+	@Test func omittedMakerFlagStaysOnSupportedHardware() {
+		let entity = DeviceHardwareEntity()
+		#expect(entity.isMaker == false)
+		#expect(HardwareCatalogRecord(entity).isMaker == false)
+
+		let omitted = HardwareCatalogRecord(
+			hwModel: 1,
+			hwModelSlug: "TBEAM",
+			platformioTarget: "tbeam",
+			displayName: "T-Beam",
+			activelySupported: true,
+			supportLevel: .flagship
+		)
+		#expect(omitted.isMaker == false)
+		#expect(HardwareDisplayTier.resolve(supportLevel: .flagship, isMaker: false) == .supported)
+		#expect(HardwareDisplayTier.resolve(supportLevel: omitted.supportLevel, isMaker: omitted.isMaker) == .supported)
+	}
+
+	@Test func makerFlagTakesFlagshipAndNicheOffTheBackerRung() {
+		#expect(HardwareDisplayTier.resolve(supportLevel: .flagship, isMaker: true) == .maker)
+		#expect(HardwareDisplayTier.resolve(supportLevel: .niche, isMaker: true) == .maker)
+	}
+
+	@Test func legacyAndDiscontinuedIgnoreTheMakerFlag() {
+		#expect(HardwareDisplayTier.resolve(supportLevel: .legacy, isMaker: true) == .legacy)
+		#expect(HardwareDisplayTier.resolve(supportLevel: .discontinued, isMaker: true) == .discontinued)
+	}
+}
+
 // MARK: - createUser Tests
 
 @Suite("createUser")
@@ -243,8 +331,9 @@ struct CreateNodeInfoTests {
 		let container = try makeTestContainer()
 		let context = container.mainContext
 		let node = createNodeInfo(num: 0xFF, context: context)
-		let hex = Int64(0xFF).toHex()
-		#expect(node.user?.userId == "!\(hex)")
+		// toHex() already carries the "!" — this previously expected "!!000000ff",
+		// codifying the extra prefix findOrCreateUser was writing.
+		#expect(node.user?.userId == Int64(0xFF).toHex())
 	}
 
 	@Test @MainActor func createNodeInfo_userShortNameIsLast4() throws {
@@ -335,6 +424,7 @@ struct ShareContactQRTests {
 		let node = NodeInfoEntity()
 		let user = UserEntity()
 		user.unmessagable = false
+		user.publicKey = Data(repeating: 0x2B, count: 32)
 		node.user = user
 
 		#expect(ShareContactQR.canShareContact(for: node))
@@ -344,6 +434,37 @@ struct ShareContactQRTests {
 
 		node.user = nil
 		#expect(!ShareContactQR.canShareContact(for: node))
+	}
+
+	@Test @MainActor func availabilityRequiresAPublicKey() {
+		// The key is what makes a shared contact worth anything, and firmware assigns public_key
+		// unconditionally when it applies one, so a keyless contact clears the key the receiving radio
+		// already held.
+		let node = NodeInfoEntity()
+		let user = UserEntity()
+		user.unmessagable = false
+		node.user = user
+
+		#expect(!ShareContactQR.canShareContact(for: node))
+
+		user.publicKey = Data()
+		#expect(!ShareContactQR.canShareContact(for: node))
+
+		user.publicKey = Data(repeating: 0x2B, count: 32)
+		#expect(ShareContactQR.canShareContact(for: node))
+	}
+
+	@Test func contactURLUnavailableWithoutAPublicKey() {
+		var user = User()
+		user.id = "!1234abcd"
+		user.longName = "Node Alpha"
+		user.shortName = "ALFA"
+		var node = NodeInfo()
+		node.num = 0x1234_ABCD
+		node.user = user
+
+		#expect(!ShareContactQR.canShareContact(for: node))
+		#expect(ShareContactQR.urlString(for: node, manuallyVerified: true) == nil)
 	}
 
 	@Test @MainActor func nodeProtoPreservesUnmessagableStateForQRAvailability() {
@@ -1082,5 +1203,43 @@ struct ChannelSettingsQRImportTests {
 		#expect(chan.settings.hasModuleSettings == true)
 		#expect(chan.settings.moduleSettings.positionPrecision == 0)
 		#expect(chan.settings.moduleSettings.isMuted == false)
+	}
+}
+
+// MARK: - userId format
+
+/// `toHex()` already prefixes "!", so a call site that interpolated another one
+/// produced "!!deadbeef". `findOrCreateUser` is the node-ingest path (a packet from a
+/// node whose NodeInfo has not arrived yet), and the value it writes is shown in
+/// message rows, matched against by node search, and exported as `userProto.id`.
+@Suite("User identifier format")
+struct UserIdentifierFormatTests {
+
+	@Test @MainActor func createUserWritesASingleBang() throws {
+		let context = try makeTestContainer().mainContext
+		let user = try createUser(num: 0xDEADBEEF, context: context)
+		#expect(user.userId == "!deadbeef")
+	}
+
+	@Test @MainActor func findOrCreateUserWritesASingleBang() throws {
+		let context = try makeTestContainer().mainContext
+		let user = findOrCreateUser(num: 0xDEADBEEF, context: context)
+		#expect(user.userId == "!deadbeef")
+	}
+
+	/// Both paths must agree — they are used interchangeably across ingest.
+	@Test @MainActor func bothPathsAgree() throws {
+		let context = try makeTestContainer().mainContext
+		let viaFind = findOrCreateUser(num: 0x1234ABCD, context: context)
+		let otherContext = try makeTestContainer().mainContext
+		let viaCreate = try createUser(num: 0x1234ABCD, context: otherContext)
+		#expect(viaFind.userId == viaCreate.userId)
+	}
+
+	@Test @MainActor func shortNameIsTheLastFourOfTheHex() throws {
+		let context = try makeTestContainer().mainContext
+		let user = findOrCreateUser(num: 0xDEADBEEF, context: context)
+		// Derived from the hex, so the stray "!" also skewed nothing here — pin it.
+		#expect(user.shortName == "beef")
 	}
 }

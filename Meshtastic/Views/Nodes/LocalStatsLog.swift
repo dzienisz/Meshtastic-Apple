@@ -9,11 +9,17 @@ import SwiftUI
 import UIKit
 import Charts
 import OSLog
+import SwiftData
 
 struct LocalStatsLog: View {
 
 	@EnvironmentObject var accessoryManager: AccessoryManager
-	private var idiom: UIUserInterfaceIdiom { UIDevice.current.userInterfaceIdiom }
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+	/// Table on iPhone shows only its first column, even in a regular size class.
+	private var showsWideTable: Bool {
+		horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom != .phone
+	}
 
 	@State private var isPresentingClearLogConfirm: Bool = false
 	@State var isExporting = false
@@ -21,28 +27,33 @@ struct LocalStatsLog: View {
 	@State private var isPresentingNoiseFloorInfo = false
 
 	@Bindable var node: NodeInfoEntity
-	@State private var sortOrder = [KeyPathComparator(\TelemetryEntity.time, order: .reverse)]
-	@State private var selection: TelemetryEntity.ID?
+	@Environment(\.modelContext) private var context
+	@State private var sortOrder = [KeyPathComparator(\LocalStatsRow.time, order: .reverse)]
+	@State private var selection: LocalStatsRow.ID?
 	@State private var selectedChartRange: LocalStatsChartRange = .day
 	@State private var chartScrollPosition = Date()
 
 	// Derived data is cached in @State and recomputed only when the underlying telemetry
-	// changes (refreshData), NOT in `body`. `localStats` is a SwiftData fetch
-	// (node.safeTelemetries), and the chart binds its scroll offset to @State
-	// (chartScrollPosition), so `body` re-evaluates on every scroll frame. Recomputing
-	// these getters there fired ~8 fetches + sorts per frame and janked scrolling.
-	@State private var localStats: [TelemetryEntity] = []
+	// changes (refreshData), NOT in `body`. The fetch runs on a background ModelActor
+	// (LocalStatsFetchActor) and only value rows cross back, and the chart binds its
+	// scroll offset to @State (chartScrollPosition), so `body` re-evaluates on every
+	// scroll frame. Recomputing these getters there fired ~8 fetches + sorts per frame
+	// and janked scrolling.
+	@State private var localStats: [LocalStatsRow] = []
 	@State private var noiseFloorReadings: [LocalStatsChartPoint] = []
 	@State private var chartYDomain: ClosedRange<Int> = -130 ... -60
 	@State private var chartDataDuration: TimeInterval = LocalStatsChartRange.minimumVisibleDuration
 	@State private var didLoad = false
+	@State private var refreshScheduled = false
+	@State private var refreshTask: Task<Void, Never>?
+	@State private var fetchActor: LocalStatsFetchActor?
 
 	private var chartVisibleDuration: TimeInterval {
 		chartVisibleDuration(for: selectedChartRange)
 	}
 
 	private var chartXAxisLabelCount: Int {
-		idiom == .phone ? 2 : 6
+		horizontalSizeClass == .regular ? 6 : 2
 	}
 
 	private var chartXAxisFormat: Date.FormatStyle {
@@ -104,6 +115,7 @@ struct LocalStatsLog: View {
 						}
 					}
 			}
+			.trackScreen(.noiseFloorInfo)
 			.presentationDetents([.medium])
 		}
 		.fileExporter(
@@ -121,14 +133,25 @@ struct LocalStatsLog: View {
 				}
 			}
 		)
-		.onAppear {
-			refreshData()
+		.task(id: node.num) {
+			// The fetch runs on a background ModelActor, so the first frame and the
+			// push animation never wait on it — it took hundreds of ms on the main
+			// thread against a long-lived store and locked the app up on open.
+			// Keyed on node.num: if this view position is reused for another node,
+			// the pending work is cancelled and the new node's data loads.
+			refreshTask?.cancel()
+			await refreshData()
 			resetChartViewToLatest()
+		}
+		.onDisappear {
+			refreshTask?.cancel()
 		}
 		.onChange(of: node.lastHeard) {
 			// New packets (including local-stats telemetry) update lastHeard; refetch then.
 			// Scrolling the chart does not touch lastHeard, so it never triggers a refetch.
-			refreshData()
+			// Coalesced: lastHeard bumps at packet rate for the connected node, and an
+			// unthrottled fetch-per-packet saturated the main thread on busy meshes.
+			scheduleRefresh()
 		}
 	}
 
@@ -171,7 +194,7 @@ struct LocalStatsLog: View {
 				.chartXVisibleDomain(length: chartVisibleDuration)
 				.chartScrollPosition(x: $chartScrollPosition)
 				.chartLegend(.hidden)
-				.frame(height: idiom == .phone ? 240 : 320)
+				.frame(height: horizontalSizeClass == .regular ? 320 : 240)
 				.padding(.bottom, 8)
 			}
 		} label: {
@@ -207,10 +230,10 @@ struct LocalStatsLog: View {
 
 	@ViewBuilder
 	private var tableView: some View {
-		if idiom == .phone {
-			phoneTableView
-		} else {
+		if showsWideTable {
 			macTableView
+		} else {
+			phoneTableView
 		}
 	}
 
@@ -309,7 +332,7 @@ struct LocalStatsLog: View {
 				}
 				.buttonStyle(.bordered)
 				.buttonBorderShape(.capsule)
-				.controlSize(idiom == .phone ? .regular : .large)
+				.controlSize(horizontalSizeClass == .regular ? .large : .regular)
 				.confirmationDialog(
 					"Are you sure?",
 					isPresented: $isPresentingClearLogConfirm,
@@ -319,7 +342,7 @@ struct LocalStatsLog: View {
 						Task { @MainActor in
 							if await MeshPackets.shared.clearTelemetry(destNum: node.num, metricsType: 4) {
 								Logger.data.notice("Cleared Local Stats for \(node.num, privacy: .public)")
-								refreshData()
+								await refreshData()
 							} else {
 								Logger.data.error("Clear Local Stats Log Failed")
 							}
@@ -336,11 +359,11 @@ struct LocalStatsLog: View {
 			)
 			.buttonStyle(.bordered)
 			.buttonBorderShape(.capsule)
-			.controlSize(idiom == .phone ? .regular : .large)
+			.controlSize(horizontalSizeClass == .regular ? .large : .regular)
 
 			if !localStats.isEmpty {
 				Button {
-					exportString = telemetryToCsvFile(telemetry: localStats, metricsType: 4)
+					exportString = localStatsCsv(rows: localStats)
 					isExporting = true
 				} label: {
 					Label {
@@ -352,7 +375,7 @@ struct LocalStatsLog: View {
 				}
 				.buttonStyle(.bordered)
 				.buttonBorderShape(.capsule)
-				.controlSize(idiom == .phone ? .regular : .large)
+				.controlSize(horizontalSizeClass == .regular ? .large : .regular)
 			}
 		}
 		.frame(maxWidth: .infinity)
@@ -406,32 +429,32 @@ struct LocalStatsLog: View {
 		}
 	}
 
-	private func timestampText(for localStats: TelemetryEntity) -> String {
+	private func timestampText(for localStats: LocalStatsRow) -> String {
 		localStats.time?.formattedDate(format: dateFormatString) ?? "Unknown Age".localized
 	}
 
-	private func phoneNoiseFloorText(for localStats: TelemetryEntity) -> String {
+	private func phoneNoiseFloorText(for localStats: LocalStatsRow) -> String {
 		guard let noiseFloor = localStats.noiseFloor else {
 			return "Noise Floor No Reading"
 		}
 		return "Noise Floor \(noiseFloor) dBm"
 	}
 
-	private func noiseFloorValueText(for localStats: TelemetryEntity) -> String {
+	private func noiseFloorValueText(for localStats: LocalStatsRow) -> String {
 		guard let noiseFloor = localStats.noiseFloor else {
 			return "No Reading"
 		}
 		return "\(noiseFloor) dBm"
 	}
 
-	private func noiseFloorTextColor(for localStats: TelemetryEntity) -> Color {
+	private func noiseFloorTextColor(for localStats: LocalStatsRow) -> Color {
 		guard let noiseFloor = localStats.noiseFloor else {
 			return .gray
 		}
 		return noiseFloorColor(noiseFloor)
 	}
 
-	private func uptimeText(for localStats: TelemetryEntity) -> String {
+	private func uptimeText(for localStats: LocalStatsRow) -> String {
 		guard let uptimeSeconds = localStats.uptimeSeconds else {
 			return Constants.nilValueIndicator
 		}
@@ -442,23 +465,50 @@ struct LocalStatsLog: View {
 }
 
 private extension LocalStatsLog {
-	/// Single source of the view's derived data. Runs one SwiftData fetch and recomputes
-	/// the cached chart inputs. Called on appear, when the node hears new packets, and
-	/// after a clear — never from `body`, so chart scrolling does no fetching or sorting.
+	/// Coalesces refetches: the connected node's lastHeard changes with every packet,
+	/// and one fetch per packet hung the app on busy meshes. At most one refresh runs
+	/// per two-second window, trailing, so the last packet in a burst is always picked
+	/// up. The pending task is cancelled on disappear and on node change so a stale
+	/// refresh can't write another node's rows into this view.
 	@MainActor
-	func refreshData() {
-		let stats = node.safeTelemetries(ofType: 4)
+	func scheduleRefresh() {
+		guard !refreshScheduled else { return }
+		refreshScheduled = true
+		refreshTask = Task { @MainActor in
+			defer { refreshScheduled = false }
+			try? await Task.sleep(for: .seconds(2))
+			guard !Task.isCancelled else { return }
+			await refreshData()
+		}
+	}
+
+	/// Single source of the view's derived data. Fetches on a background ModelActor —
+	/// the predicate scan takes hundreds of ms on a long-lived store and must never
+	/// block the main actor — then recomputes the cached chart inputs from the value
+	/// rows. Called on appear, when the node hears new packets, and after a clear —
+	/// never from `body`, so chart scrolling does no fetching or sorting.
+	@MainActor
+	func refreshData() async {
+		let fetcher: LocalStatsFetchActor
+		if let fetchActor {
+			fetcher = fetchActor
+		} else {
+			fetcher = LocalStatsFetchActor(modelContainer: context.container)
+			fetchActor = fetcher
+		}
+		let stats = await fetcher.rows(nodeNum: node.num)
+		guard !Task.isCancelled else { return }
 		localStats = stats
 
-		// safeTelemetries already returns rows sorted by time descending; compactMap
-		// preserves that order, so reversing yields ascending without a second sort.
+		// The fetch returns rows sorted by time descending; compactMap preserves
+		// that order, so reversing yields ascending without a second sort.
 		let readings = Array(
 			stats.compactMap { point -> LocalStatsChartPoint? in
 				guard let time = point.time, let noiseFloor = point.noiseFloor else { return nil }
 				return LocalStatsChartPoint(time: time, noiseFloor: noiseFloor)
 			}.reversed()
 		)
-		noiseFloorReadings = readings
+		noiseFloorReadings = downsampledForChart(readings)
 
 		let values = readings.map { Int($0.noiseFloor) }
 		if let minValue = values.min(), let maxValue = values.max() {
@@ -519,6 +569,84 @@ private struct LocalStatsChartPoint: Identifiable {
 	let noiseFloor: Int32
 
 	var id: Date { time }
+}
+
+/// Value snapshot of one local-stats telemetry row. The fetch runs on a background
+/// ModelActor, and value types are what may cross back to the main actor.
+struct LocalStatsRow: Identifiable, Sendable {
+	let id: PersistentIdentifier
+	let time: Date?
+	let noiseFloor: Int32?
+	let uptimeSeconds: Int32?
+	let numTxRelay: Int32
+	let numTxRelayCanceled: Int32
+	let numRxDupe: Int32
+	let numPacketsTx: Int32
+	let numPacketsRx: Int32
+	let numPacketsRxBad: Int32
+	let numOnlineNodes: Int32
+	let numTotalNodes: Int32
+}
+
+/// Fetches the node's local-stats telemetry on a background context so the main actor
+/// never blocks on the (unindexed) predicate scan — same pattern as MessageSearchActor.
+@ModelActor
+actor LocalStatsFetchActor {
+	func rows(nodeNum: Int64) -> [LocalStatsRow] {
+		var descriptor = FetchDescriptor<TelemetryEntity>(
+			predicate: TelemetryEntity.predicate(forNode: nodeNum, metricsType: 4),
+			sortBy: [SortDescriptor(\TelemetryEntity.time, order: .reverse)]
+		)
+		descriptor.fetchLimit = 500
+		let entities = (try? modelContext.fetch(descriptor)) ?? []
+		return entities.map { telemetry in
+			LocalStatsRow(
+				id: telemetry.persistentModelID,
+				time: telemetry.time,
+				noiseFloor: telemetry.noiseFloor,
+				uptimeSeconds: telemetry.uptimeSeconds,
+				numTxRelay: telemetry.numTxRelay,
+				numTxRelayCanceled: telemetry.numTxRelayCanceled,
+				numRxDupe: telemetry.numRxDupe,
+				numPacketsTx: telemetry.numPacketsTx,
+				numPacketsRx: telemetry.numPacketsRx,
+				numPacketsRxBad: telemetry.numPacketsRxBad,
+				numOnlineNodes: telemetry.numOnlineNodes,
+				numTotalNodes: telemetry.numTotalNodes
+			)
+		}
+	}
+}
+
+/// Same columns and formatting as `telemetryToCsvFile`'s local-stats branch, built
+/// from the value rows this view holds instead of live entities.
+private func localStatsCsv(rows: [LocalStatsRow]) -> String {
+	var csvString = "Noise Floor, Uptime, Relayed, Canceled, Dupes, Packets Tx, Packets Rx, Bad Rx, Nodes Online, Total Nodes, \("Timestamp".localized)"
+	for row in rows {
+		csvString += "\n"
+		csvString += row.noiseFloor?.formatted(.number.grouping(.never)) ?? ""
+		csvString += ", "
+		csvString += row.uptimeSeconds?.formatted(.number.grouping(.never)) ?? ""
+		csvString += ", "
+		csvString += row.numTxRelay.formatted(.number.grouping(.never))
+		csvString += ", "
+		csvString += row.numTxRelayCanceled.formatted(.number.grouping(.never))
+		csvString += ", "
+		csvString += row.numRxDupe.formatted(.number.grouping(.never))
+		csvString += ", "
+		csvString += row.numPacketsTx.formatted(.number.grouping(.never))
+		csvString += ", "
+		csvString += row.numPacketsRx.formatted(.number.grouping(.never))
+		csvString += ", "
+		csvString += row.numPacketsRxBad.formatted(.number.grouping(.never))
+		csvString += ", "
+		csvString += row.numOnlineNodes.formatted(.number.grouping(.never))
+		csvString += ", "
+		csvString += row.numTotalNodes.formatted(.number.grouping(.never))
+		csvString += ", "
+		csvString += row.time?.formatted(date: .numeric, time: .shortened).replacing(",", with: "") ?? ""
+	}
+	return csvString
 }
 
 private enum LocalStatsChartRange: String, CaseIterable, Identifiable {

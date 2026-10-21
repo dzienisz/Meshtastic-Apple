@@ -17,28 +17,28 @@ struct MapScreen: View {
 	@Bindable var client: MeshClient
 	@State private var selectedNodeNum: UInt32?
 	@State private var recenterToken = 0
+	@State private var pollTick = 0
 	// Row focus is the browse signal on tvOS: List(selection:) does not follow
 	// focus for NavigationLink rows, so track it explicitly and mirror it into
 	// the map selection (debounced map-side).
 	@FocusState private var focusedNodeNum: UInt32?
+	@FocusState private var recenterFocused: Bool
 	@State private var navPath: [UInt32] = []
 
 	/// The persisted node store — the map and list read from here, not the client.
 	@Query private var allNodes: [MeshNode]
 
-	/// All nodes for the side list: located first, then alphabetically.
-	private var sortedNodes: [MeshNode] {
-		allNodes.sorted {
-			if $0.hasLocation != $1.hasLocation { return $0.hasLocation }
-			return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
-		}
-	}
+	/// Decoded offline basemap. Held here (not in MeshTVMapView) so the decode survives
+	/// the representable's updates; it publishes nothing until a region is downloaded.
+	@StateObject private var offlineVectors = OfflineVectorTileProvider()
 
-	/// Located nodes, most-recently-heard first — the map's data source.
-	private var locatedNodes: [MeshNode] {
-		allNodes.filter(\.hasLocation)
-			.sorted { ($0.lastHeard ?? .distantPast) > ($1.lastHeard ?? .distantPast) }
-	}
+	/// Mesh stats strip visibility + position, shared with SettingsView via the same keys.
+	@AppStorage("tv.statsBar.enabled") private var statsBarEnabled = true
+	@AppStorage("tv.statsBar.edge") private var statsBarEdge: StatsStripEdge = .top
+
+	// Cached sort/filter results so we don't re-sort 1000+ nodes on every body eval.
+	@State private var sortedNodes: [MeshNode] = []
+	@State private var locatedNodes: [MeshNode] = []
 
 	var body: some View {
 		HStack(spacing: 0) {
@@ -49,17 +49,54 @@ struct MapScreen: View {
 				nodes: locatedNodes,
 				selectedNodeNum: $selectedNodeNum,
 				recenterToken: recenterToken,
-				onMenuExit: escapeMap
+				offlineVectors: offlineVectors
 			)
 			.ignoresSafeArea()
+			// Overlay, not safeAreaInset: an inset resizes the MKMapView and re-triggers
+			// the representable's region framing every time the strip toggles or moves.
+			.overlay(alignment: statsBarEdge == .top ? .top : .bottom) {
+				if statsBarEnabled {
+					MeshStatsStrip(
+						stats: client.stats,
+						storeOnlineCount: allNodes.filter(\.isOnline).count,
+						storeTotalCount: allNodes.count,
+						edition: EventEdition(client.firmwareEdition)
+					)
+					.padding(TVTheme.statsStripMargin)
+					// The map is full-bleed but the overlay lands inside the safe
+					// area, so the bar stopped ~80pt short of the screen edge while
+					// its columns were squeezed. Reclaim that width.
+					.ignoresSafeArea(edges: .horizontal)
+				}
+			}
+		}
+		.onChange(of: allNodes) { _, newNodes in
+			recomputeNodeLists(from: newNodes)
+		}
+		// onChange(of: allNodes) only fires on membership changes — SwiftData models
+		// compare by identity, so in-place mutations (a node gaining a position, or
+		// lastHeard updating) never trigger it once inserts stop. Poll on a gentle
+		// cadence like the iOS mesh map does, so the cached lists can't go stale.
+		.onChange(of: pollTick, initial: true) {
+			recomputeNodeLists(from: allNodes)
+		}
+		.task {
+			while !Task.isCancelled {
+				try? await Task.sleep(for: .seconds(2))
+				pollTick += 1
+			}
 		}
 	}
 
-	/// Menu pressed while the map held focus: pop any open node detail and hand
-	/// focus back to the node list — without this, MKMapView is a focus trap.
-	private func escapeMap() {
-		navPath = []
-		focusedNodeNum = selectedNodeNum ?? sortedNodes.first?.num
+	private func recomputeNodeLists(from nodes: [MeshNode]) {
+		let newSorted = nodes.sorted {
+			if $0.hasLocation != $1.hasLocation { return $0.hasLocation }
+			return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+		}
+		let newLocated = nodes.filter(\.hasLocation)
+			.sorted { ($0.lastHeard ?? .distantPast) > ($1.lastHeard ?? .distantPast) }
+		if newSorted.map(\.num) != sortedNodes.map(\.num) { sortedNodes = newSorted }
+		if newLocated.map(\.num) != locatedNodes.map(\.num) { locatedNodes = newLocated }
 	}
 
 	private var nodeList: some View {
@@ -74,6 +111,7 @@ struct MapScreen: View {
 					} label: {
 						Label("Re-center Map", systemImage: "scope")
 					}
+					.focused($recenterFocused)
 					NavigationLink {
 						SettingsView()
 					} label: {
@@ -97,6 +135,8 @@ struct MapScreen: View {
 					Text("\(allNodes.count) nodes · \(locatedNodes.count) on map")
 				}
 			}
+			// Focused tvOS controls grow beyond their rows; keep them inside the List's clip.
+			.contentMargins(.horizontal, TVTheme.nodeListContentMargin, for: .scrollContent)
 			.onChange(of: focusedNodeNum) { _, newValue in
 				if let newValue { selectedNodeNum = newValue }
 			}
@@ -114,7 +154,7 @@ struct MapScreen: View {
 	private var header: some View {
 		HStack(spacing: 20) {
 			VStack(alignment: .leading, spacing: 6) {
-				Image("meshtastic-wordmark-white")
+				Image(decorative: "meshtastic-wordmark-white")
 					.resizable()
 					.scaledToFit()
 					.frame(height: TVTheme.wordmarkHeight)
@@ -142,17 +182,8 @@ struct MapScreen: View {
 						endPoint: .bottom
 					)
 				)
-				.ignoresSafeArea(edges: .top)
+				.ignoresSafeArea(edges: [.top, .leading])
 		}
-	}
-
-	private var disconnectButton: some View {
-		Button(role: .destructive) {
-			client.disconnect()
-		} label: {
-			Label("Disconnect", systemImage: "xmark.circle.fill")
-		}
-		.buttonStyle(.bordered)
 	}
 }
 
@@ -178,7 +209,9 @@ private struct NodeRow: View {
 				HStack(spacing: 14) {
 					if let lastHeard = node.lastHeard {
 						Label {
-							Text(lastHeard.formatted(.relative(presentation: .named)))
+								// Compact so the role and position labels fit beside it on a
+							// 520pt list, and never future-tense for a just-heard node.
+							Text(RelativeAge.text(since: lastHeard))
 						} icon: {
 							Image(systemName: node.isOnline ? "checkmark.circle.fill" : "moon.circle.fill")
 								.foregroundStyle(node.isOnline ? Color("MeshtasticSuccess") : Color("MeshtasticWarning"))
@@ -194,8 +227,29 @@ private struct NodeRow: View {
 				.font(.caption)
 				.foregroundStyle(.secondary)
 				.lineLimit(1)
+				.minimumScaleFactor(0.75)
 			}
-			Spacer()
+			// Take the row's remaining width outright. A trailing Spacer() competes
+			// with the text for it, and Text yields by truncating — which is why the
+			// metadata line clipped while the row still had space to its right.
+			.frame(maxWidth: .infinity, alignment: .leading)
 		}
+		.accessibilityElement(children: .ignore)
+		.accessibilityLabel(node.displayName)
+		.accessibilityValue(accessibilityValue)
+	}
+
+	private var accessibilityValue: String {
+		var parts = [node.isOnline ? "Online" : "Offline"]
+		if let lastHeard = node.lastHeard {
+			parts.append("Last heard \(lastHeard.formatted(.relative(presentation: .named)))")
+		}
+		if let role = node.nodeRole {
+			parts.append("Role: \(role.name)")
+		}
+		if !node.hasLocation {
+			parts.append("No position")
+		}
+		return parts.joined(separator: ", ")
 	}
 }

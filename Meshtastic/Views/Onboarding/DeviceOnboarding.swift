@@ -12,6 +12,17 @@ struct DeviceOnboarding: View {
 		case bluetooth
 		case localNetwork
 		case siri
+
+		/// Screen name reported to RUM. See `ScreenName`.
+		var screenName: ScreenName {
+			switch self {
+			case .notifications: return .onboardingNotifications
+			case .location: return .onboardingLocation
+			case .bluetooth: return .onboardingBluetooth
+			case .localNetwork: return .onboardingLocalNetwork
+			case .siri: return .onboardingSiri
+			}
+		}
 	}
 	
 	@EnvironmentObject var accessoryManager: AccessoryManager
@@ -345,20 +356,26 @@ struct DeviceOnboarding: View {
 	
 	var body: some View {
 		NavigationStack(path: $navigationPath) {
+			// The Bluetooth step is the stack's root rather than a pushed destination, so it
+			// needs the name here; the rest get it below.
 			bluetoothView
+				.trackScreen(SetupGuide.bluetooth.screenName)
 				.navigationDestination(for: SetupGuide.self) { guide in
-					switch guide {
-					case .notifications:
-						notificationView
-					case .location:
-						locationView
-					case .bluetooth:
-						bluetoothView
-					case .localNetwork:
-						localNetworkView
-					case .siri:
-						siriView
+					Group {
+						switch guide {
+						case .notifications:
+							notificationView
+						case .location:
+							locationView
+						case .bluetooth:
+							bluetoothView
+						case .localNetwork:
+							localNetworkView
+						case .siri:
+							siriView
+						}
 					}
+					.trackScreen(guide.screenName)
 				}
 		}
 		.interactiveDismissDisabled()
@@ -454,7 +471,7 @@ struct DeviceOnboarding: View {
 		case .localNetwork:
 			return .notifications
 		case .notifications:
-			if locationStatus == .authorizedWhenInUse || locationStatus == .authorizedAlways {
+			if locationStatus.allowsLocationUse {
 				return .siri
 			}
 			return .location
@@ -483,8 +500,9 @@ struct DeviceOnboarding: View {
 	
 	// MARK: Formatting
 	func createNotificationsString() -> AttributedString {
-		var fullText = AttributedString("Allow Meshtastic to send you notifications for messages, node events, and critical alerts. You can update notification permissions at any time from settings.")
-		if let range = fullText.range(of: "settings") {
+		var fullText = AttributedString(localized: "Allow Meshtastic to send you notifications for messages, node events, and critical alerts. You can update notification permissions at any time from settings.")
+		if let range = fullText.range(of: String(localized: "settings"))
+			?? fullText.range(of: "settings") {
 			fullText[range].link = URL(string: UIApplication.openSettingsURLString)!
 			fullText[range].foregroundColor = .blue
 		}
@@ -501,8 +519,9 @@ struct DeviceOnboarding: View {
 	}
 	
 	func createLocalNetworkString() -> AttributedString {
-		var fullText = AttributedString("Meshtastic accesses your local network to connect to TCP-based accessories.  You can update the local network permissions at any time from settings.")
-		if let range = fullText.range(of: "settings") {
+		var fullText = AttributedString(localized: "Meshtastic accesses your local network to connect to TCP-based accessories.  You can update the local network permissions at any time from settings.")
+		if let range = fullText.range(of: String(localized: "settings"))
+			?? fullText.range(of: "settings") {
 			fullText[range].link = URL(string: UIApplication.openSettingsURLString)!
 			fullText[range].foregroundColor = .blue
 		}
@@ -510,8 +529,9 @@ struct DeviceOnboarding: View {
 	}
 	
 	func createBluetoothString() -> AttributedString {
-		var fullText = AttributedString("Meshtastic uses Bluetooth to connect to BLE-based accessories.  You can update the permissions at any time from settings.")
-		if let range = fullText.range(of: "settings") {
+		var fullText = AttributedString(localized: "Meshtastic uses Bluetooth to connect to BLE-based accessories.  You can update the permissions at any time from settings.")
+		if let range = fullText.range(of: String(localized: "settings"))
+			?? fullText.range(of: "settings") {
 			fullText[range].link = URL(string: UIApplication.openSettingsURLString)!
 			fullText[range].foregroundColor = .blue
 		}
@@ -519,8 +539,9 @@ struct DeviceOnboarding: View {
 	}
 	
 	func createSiriString() -> AttributedString {
-		var fullText = AttributedString("Meshtastic supports Siri, Shortcuts, and CarPlay so you can send and receive messages hands-free. You can update Siri permissions at any time from settings.")
-		if let range = fullText.range(of: "settings") {
+		var fullText = AttributedString(localized: "Meshtastic supports Siri, Shortcuts, and CarPlay so you can send and receive messages hands-free. You can update Siri permissions at any time from settings.")
+		if let range = fullText.range(of: String(localized: "settings"))
+			?? fullText.range(of: "settings") {
 			fullText[range].link = URL(string: UIApplication.openSettingsURLString)!
 			fullText[range].foregroundColor = .blue
 		}

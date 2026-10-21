@@ -92,9 +92,9 @@ struct ModemPresetsTests {
 		}
 	}
 
-	@Test func allCases_haveProtoEnumValue() {
+	@Test func allCases_haveMatchingProtoRawValue() {
 		for preset in ModemPresets.allCases {
-			_ = preset.protoEnumValue()
+			#expect(preset.protoEnumValue().rawValue == preset.rawValue)
 		}
 	}
 
@@ -189,6 +189,24 @@ struct CodingRatesTests {
 	@Test func customMode_normalizesInvalidValuesToLowestCodingRate() {
 		#expect(CodingRates.normalized(0, usePreset: false, modemPreset: .longFast) == 5)
 		#expect(CodingRates.normalized(9, usePreset: false, modemPreset: .longFast) == 5)
+	}
+
+	@Test func presetMode_reportsThePresetRateWhenTheRadioCannotOverrideIt() {
+		// Firmware before 2.7.18 takes the coding rate from the preset whatever the
+		// field holds, so a stored override is not what the radio is using.
+		#expect(CodingRates.effective(7, usePreset: true, modemPreset: .longFast, supportsOverride: false) == 0)
+		#expect(CodingRates.effective(0, usePreset: true, modemPreset: .longFast, supportsOverride: false) == 0)
+	}
+
+	@Test func presetMode_reportsTheOverrideWhenTheRadioUsesIt() {
+		#expect(CodingRates.effective(7, usePreset: true, modemPreset: .longFast, supportsOverride: true) == 7)
+		#expect(CodingRates.effective(5, usePreset: true, modemPreset: .longFast, supportsOverride: true) == 0)
+	}
+
+	@Test func customMode_isUnaffectedByTheFirmwareVersion() {
+		// `coding_rate` has always applied with `use_preset` off.
+		#expect(CodingRates.effective(7, usePreset: false, modemPreset: .longFast, supportsOverride: false) == 7)
+		#expect(CodingRates.effective(9, usePreset: false, modemPreset: .longFast, supportsOverride: false) == 5)
 	}
 }
 
@@ -932,10 +950,25 @@ struct LoRaPresetSelectionTests {
 		licensedOnly: false)
 
 	// A factory-flashed (region unset) node on 2.8 firmware defaults to Long Turbo
-	// when the US region is selected.
-	@Test func factoryUS_on28_defaultsToLongTurbo() {
+	// when the US region is selected and there is no current preset to preserve.
+	@Test func factoryUS_on28_withoutCurrentPreset_defaultsToLongTurbo() {
+		let result = ModemPresets.presetToSelect(forRegion: .us, factoryFresh: true, supports2_8: true, usePreset: true, regionInfo: usInfo, currentPreset: nil)
+		#expect(result == .longTurbo)
+	}
+
+	// Stock Long Fast must migrate to Long Turbo on a factory-fresh US node even
+	// though the region map lists Long Fast: its bandwidth is not US-compliant,
+	// and 2.8 moves US users off it.
+	@Test func factoryUS_on28_stockLongFast_movesToLongTurbo() {
 		let result = ModemPresets.presetToSelect(forRegion: .us, factoryFresh: true, supports2_8: true, usePreset: true, regionInfo: usInfo, currentPreset: .longFast)
 		#expect(result == .longTurbo)
+	}
+
+	// A deliberate preset from a community firmware build must survive the first
+	// region selection when that preset is legal in the selected region.
+	@Test func factoryUS_on28_keepsLegalShortTurbo() {
+		let result = ModemPresets.presetToSelect(forRegion: .us, factoryFresh: true, supports2_8: true, usePreset: true, regionInfo: usInfo, currentPreset: .shortTurbo)
+		#expect(result == nil)
 	}
 
 	// US allows Long Turbo even before the region map has been received.
@@ -984,6 +1017,12 @@ struct LoRaPresetSelectionTests {
 		let usNoTurbo = RegionPresetInfo(presets: Set<Preset>([.longFast, .longSlow]), defaultPreset: .longFast, licensedOnly: false)
 		let result = ModemPresets.presetToSelect(forRegion: .us, factoryFresh: true, supports2_8: true, usePreset: true, regionInfo: usNoTurbo, currentPreset: .longFast)
 		#expect(result == nil)
+	}
+
+	@Test func factoryUS_longTurboIllegal_withoutCurrentPreset_usesRegionDefault() {
+		let usNoTurbo = RegionPresetInfo(presets: Set<Preset>([.longFast, .longSlow]), defaultPreset: .longFast, licensedOnly: false)
+		let result = ModemPresets.presetToSelect(forRegion: .us, factoryFresh: true, supports2_8: true, usePreset: true, regionInfo: usNoTurbo, currentPreset: nil)
+		#expect(result == .longFast)
 	}
 }
 

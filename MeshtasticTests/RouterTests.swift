@@ -25,6 +25,44 @@ struct RouterTests {
 		#expect(state == custom)
 	}
 
+	@Test func popAllStacksKeepsTheTab() async {
+		let router = await Router(navigationState: NavigationState(
+			selectedTab: .settings,
+			messages: .channels(),
+			nodeListSelectedNodeNum: 5,
+			map: .waypoint(9),
+			settings: .lora
+		))
+		await router.popAllStacks()
+		let state = await router.navigationState
+		#expect(state.selectedTab == .settings)
+		#expect(state.messages == nil)
+		#expect(state.nodeListSelectedNodeNum == nil)
+		#expect(state.map == nil)
+		#expect(state.settings == nil)
+	}
+
+	@Test func poppingEverySceneKeepsEachTab() async {
+		let messages = await Router(navigationState: NavigationState(
+			selectedTab: .messages,
+			messages: .directMessages()
+		))
+		let nodes = await Router(navigationState: NavigationState(
+			selectedTab: .nodes,
+			nodeListSelectedNodeNum: 3
+		))
+		let registry = SceneRouters()
+		let messagesToken = await registry.register(messages)
+		let nodesToken = await registry.register(nodes)
+		await registry.popAllStacks()
+		#expect(await messages.selectedTab == .messages)
+		#expect(await messages.messagesState == nil)
+		#expect(await nodes.selectedTab == .nodes)
+		#expect(await nodes.selectedNodeNum == nil)
+		await registry.unregister(messagesToken)
+		await registry.unregister(nodesToken)
+	}
+
 	// MARK: - Invalid URL Handling
 
 	@Test func invalidSchemeIsIgnored() async throws {
@@ -175,6 +213,46 @@ struct RouterTests {
 		)
 	}
 
+	// MARK: - Spatial map
+
+	@Test func spatialMapRequestParsesTheQuery() throws {
+		func request(_ query: String) throws -> SpatialMapOpenRequest? {
+			let components = try #require(URLComponents(string: "meshtastic:///map?\(query)"))
+			return Router.spatialMapRequest(in: components)
+		}
+		#expect(try request("spatial=1&nodenum=5")?.nodeNum == 5)
+		#expect(try request("spatial=true")?.nodeNum == nil)
+		#expect(try request("spatial=1&nodenum=abc") != nil)
+		#expect(try request("spatial=1&nodenum=abc")?.nodeNum == nil)
+		#expect(try request("spatial=0&nodenum=5") == nil)
+		#expect(try request("spatial=abc") == nil)
+		#expect(try request("nodenum=5") == nil)
+	}
+
+	#if os(visionOS)
+	@Test func routeMapSpatialAsksForTheVolumeAndKeepsTheTab() async throws {
+		let router = await Router()
+		let url = try #require(URL(string: "meshtastic:///map?spatial=1&nodenum=5"))
+		await router.route(url: url)
+		#expect(await router.spatialMapRequest?.nodeNum == 5)
+		#expect(await router.selectedTab == .connect)
+		#expect(await router.mapState == nil)
+		#expect(await router.claimSpatialMapRequest()?.nodeNum == 5)
+		#expect(await router.claimSpatialMapRequest() == nil)
+	}
+	#else
+	@Test func routeMapSpatialFallsBackToTheMapTab() async throws {
+		try await assertRoute(
+			"meshtastic:///map?spatial=1&nodenum=5",
+			NavigationState(selectedTab: .map, map: .selectedNode(5))
+		)
+		try await assertRoute(
+			"meshtastic:///map?spatial=1",
+			NavigationState(selectedTab: .map)
+		)
+	}
+	#endif
+
 	// MARK: - Settings
 
 	@Test func routeSettings() async throws {
@@ -210,10 +288,8 @@ struct RouterTests {
 		("ringtone", SettingsNavigationState.ringtone),
 		("serial", SettingsNavigationState.serial),
 		("security", SettingsNavigationState.security),
-		("statusMessage", SettingsNavigationState.statusMessage),
 		("storeAndForward", SettingsNavigationState.storeAndForward),
 		("telemetry", SettingsNavigationState.telemetry),
-		("trafficManagement", SettingsNavigationState.trafficManagement),
 		("debugLogs", SettingsNavigationState.debugLogs),
 		("appFiles", SettingsNavigationState.appFiles),
 		("firmwareUpdates", SettingsNavigationState.firmwareUpdates),

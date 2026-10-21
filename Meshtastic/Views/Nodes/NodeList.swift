@@ -12,6 +12,7 @@ import Foundation
 
 struct NodeList: View {
 	@Environment(\.modelContext) private var context
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	@EnvironmentObject var accessoryManager: AccessoryManager
 	@EnvironmentObject var router: Router
 	@AppStorage("nodeListDensity") private var nodeListDensity: NodeListDensity = .standard
@@ -22,7 +23,8 @@ struct NodeList: View {
 	@State private var deleteNodeId: Int64 = 0
 	@State private var shareContactNode: NodeInfoEntity?
 	@State private var nodeForDisplayNameEdit: NodeInfoEntity?
-	@ObservedObject var filters = NodeFilterParameters.shared
+	@State private var nodeForStatusMessageEdit: NodeInfoEntity?
+	@EnvironmentObject private var filters: NodeFilterParameters
 	@State var isEditingFilters = false
 	@State private var showingHelp = false
 	@SceneStorage("selectedDetailView") var selectedDetailView: String?
@@ -36,24 +38,84 @@ struct NodeList: View {
 
 	@State private var columnVisibility: NavigationSplitViewVisibility = .all
 
+	/// The open iPhone Duo display is regular width but only about 669pt across, which
+	/// is not enough for two real columns. `NavigationSplitView` then draws the sidebar
+	/// as an overlay on top of the detail column, and with `columnVisibility` pinned to
+	/// `.all` it stays there — covering the detail column's navigation bar and the back
+	/// button with it, so a pushed screen like the Local Stats Log cannot be dismissed.
+	///
+	/// A phone-idiom device never has room for the two-column layout, so at this width it
+	/// gets the same single stack it gets folded. Compact width still goes through the
+	/// split view, which collapses to a stack on its own and is the path every iPhone
+	/// already takes.
+	private var prefersStackOverOverlaySidebar: Bool {
+		horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom == .phone
+	}
+
+	/// The stack's contents, expressed as the selected node so that everything which
+	/// drives the split view's detail column drives this too.
+	///
+	/// `selectedNodeNum` is the app's handle on this screen: `navigateToNodeDetail`
+	/// sets it for deep links and notification taps, and `popToRoot(tab: .nodes)`
+	/// clears it — which is how `popAllStacks()` unmounts the detail views holding
+	/// model objects before the store is replaced. A stack that only pushed on a row
+	/// tap would ignore both, so a deep link would go nowhere and a node switch would
+	/// leave this screen mounted across the container swap.
+	private var nodeDetailPath: Binding<[Int64]> {
+		Binding(
+			get: { router.selectedNodeNum.map { [$0] } ?? [] },
+			set: { router.selectedNodeNum = $0.first }
+		)
+	}
+
+	/// What a selected node opens. Shared so the stack and the split view's detail
+	/// column agree — including the seeded local-stats harness, which otherwise
+	/// worked folded and silently did nothing open.
+	@ViewBuilder
+	private func nodeDestination(_ node: NodeInfoEntity, nodeNum: Int64) -> some View {
+		if opensSeededLocalStatsLog {
+			LocalStatsLog(node: node)
+		} else {
+			NodeDetail(node: node, nodeNum: nodeNum)
+				.trackScreen(.nodeDetail)
+		}
+	}
+
+	@ViewBuilder
+	private var detailContent: some View {
+		if let selectedNum = router.selectedNodeNum,
+		   let node = router.cachedNodeInfo(id: selectedNum, context: context) {
+			nodeDestination(node, nodeNum: selectedNum)
+		} else {
+			ContentUnavailableView("Select a Node", systemImage: "flipphone")
+		}
+	}
+
 	var body: some View {
-		NavigationSplitView(columnVisibility: $columnVisibility) {
-			sidebarContent
-		} detail: {
-			NavigationStack {
-				if let selectedNum = router.selectedNodeNum,
-				   let node = router.cachedNodeInfo(id: selectedNum, context: context) {
-					if opensSeededLocalStatsLog {
-						LocalStatsLog(node: node)
-					} else {
-						NodeDetail(node: node, nodeNum: selectedNum)
-					}
-				} else {
-					ContentUnavailableView("Select a Node", systemImage: "flipphone")
+		Group {
+			if prefersStackOverOverlaySidebar {
+				NavigationStack(path: nodeDetailPath) {
+					sidebarContent
+						// The sidebar's rows are `NavigationLink(value:)`, which the split
+						// view turns into a selection. In a stack they need a destination
+						// to push, and pushing is what gives the detail screens a back button.
+						.navigationDestination(for: Int64.self) { nodeNum in
+							if let node = router.cachedNodeInfo(id: nodeNum, context: context) {
+								nodeDestination(node, nodeNum: nodeNum)
+							}
+						}
 				}
+			} else {
+				NavigationSplitView(columnVisibility: $columnVisibility) {
+					sidebarContent
+				} detail: {
+					NavigationStack {
+						detailContent
+					}
+				}
+				.navigationSplitViewStyle(.balanced)
 			}
 		}
-		.navigationSplitViewStyle(.balanced)
 		.onAppear {
 			filters.fallbackLocation = connectedNode?.latestPosition?.nodeCoordinate
 		}
@@ -81,6 +143,7 @@ struct NodeList: View {
 			deleteNodeId: $deleteNodeId,
 			shareContactNode: $shareContactNode,
 			nodeForDisplayNameEdit: $nodeForDisplayNameEdit,
+			nodeForStatusMessageEdit: $nodeForStatusMessageEdit,
 			nodeListDensity: $nodeListDensity,
 			selectedNodeNum: $router.selectedNodeNum
 		)
@@ -91,6 +154,12 @@ struct NodeList: View {
 		}
 		.sheet(isPresented: $showingHelp) {
 			NodeListHelp()
+		}
+		.safeAreaInset(edge: .top) {
+			// Shown after the radio's LoRa settings move it to a different channel. A banner rather
+			// than an alert on the settings screen: a LoRa write reboots the radio, so anything modal
+			// at save time competes with the reconnect, and this needs to survive being missed.
+			UnheardNodesBanner()
 		}
 		.safeAreaInset(edge: .bottom, alignment: .leading) {
 			HStack {
@@ -140,7 +209,7 @@ struct NodeList: View {
 		}
 		.searchable(text: $filters.searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Find a node")
 		.autocorrectionDisabled(true)
-		.scrollDismissesKeyboard(.immediately)
+		.dismissesKeyboardOnScroll()
 		.listStyle(.plain)
 		.alert("Position Exchange Requested", isPresented: $isPresentingPositionSentAlert) {
 			Button("OK") { }.keyboardShortcut(.defaultAction)
@@ -169,19 +238,11 @@ struct NodeList: View {
 			)
 		}
 		.displayNameAlert(node: $nodeForDisplayNameEdit)
+		.statusMessageAlert(node: $nodeForStatusMessageEdit)
 		.navigationSplitViewColumnWidth(min: 100, ideal: 300, max: .infinity)
 		.toolbar {
 			ToolbarItem(placement: .topBarLeading) {
 				MeshtasticLogo()
-			}
-			if let connectedNode, ShareContactQR.canShareContact(for: connectedNode) {
-				ToolbarItem(placement: .topBarTrailing) {
-					Button {
-						shareContactNode = connectedNode
-					} label: {
-						Label("Share Connected Node", systemImage: "person.crop.circle.badge.plus")
-					}
-				}
 			}
 			ToolbarItem(placement: .topBarTrailing) {
 				ConnectedDevice(
@@ -243,6 +304,7 @@ private struct FilteredNodeList: View {
 	@Binding var deleteNodeId: Int64
 	@Binding var shareContactNode: NodeInfoEntity?
 	@Binding var nodeForDisplayNameEdit: NodeInfoEntity?
+	@Binding var nodeForStatusMessageEdit: NodeInfoEntity?
 	@Binding var nodeListDensity: NodeListDensity
 	@Binding var selectedNodeNum: Int64?
 	var filters: NodeFilterParameters
@@ -254,6 +316,7 @@ private struct FilteredNodeList: View {
 		deleteNodeId: Binding<Int64>,
 		shareContactNode: Binding<NodeInfoEntity?>,
 		nodeForDisplayNameEdit: Binding<NodeInfoEntity?>,
+		nodeForStatusMessageEdit: Binding<NodeInfoEntity?>,
 		nodeListDensity: Binding<NodeListDensity>,
 		selectedNodeNum: Binding<Int64?>
 	) {
@@ -263,11 +326,12 @@ private struct FilteredNodeList: View {
 		self._deleteNodeId = deleteNodeId
 		self._shareContactNode = shareContactNode
 		self._nodeForDisplayNameEdit = nodeForDisplayNameEdit
+		self._nodeForStatusMessageEdit = nodeForStatusMessageEdit
 		self._nodeListDensity = nodeListDensity
 		self._selectedNodeNum = selectedNodeNum
 	}
 
-	/// Fetch descriptor for the node set, built from the live shared `filters` at fetch time so
+	/// Fetch descriptor for the node set, built from this window's `filters` at fetch time so
 	/// predicate-level filter edits apply on the next refresh tick. Applied via explicit fetches
 	/// on a throttled cadence (see `.task`) rather than a live `@Query` — a live query
 	/// re-evaluated `body` on every SwiftData write, and under heavy ingestion that meant a
@@ -364,7 +428,11 @@ private struct FilteredNodeList: View {
 	// The body of the view
 	var body: some View {
 		List(displayedNodes, selection: $selectedNodeNum) { entry in
-			if entry.node.modelContext != nil {
+			// `!isDeleted` matters as much as the context check: `context.delete()` marks
+			// isDeleted while modelContext stays non-nil until the save completes, and row
+			// bodies re-evaluate mid-save via SwiftData's change notification — reading a
+			// persisted property in that window traps (the NodeListItem SIGTRAP family).
+			if entry.node.modelContext != nil && !entry.node.isDeleted {
 				NavigationLink(value: entry.id) {
 					switch nodeListDensity {
 					case .compact:
@@ -386,6 +454,15 @@ private struct FilteredNodeList: View {
 						connectedNode: connectedNode
 					)
 				}
+			} else {
+				// Keep a row for an entry whose node died since the last snapshot tick (cap
+				// eviction, user delete). A conditional row that silently produces nothing
+				// desyncs the List's item counts from its data and crashes in UICollectionView
+				// batch updates ("attempt to delete item N from section 0..."). The purge pass
+				// in the cadence task removes the entry through a real, consistent diff.
+				Color.clear
+					.frame(height: 1)
+					.accessibilityHidden(true)
 			}
 		}
 		.navigationTitle(String.localizedStringWithFormat("Nodes (%@)".localized, String(displayedNodes.count)))
@@ -393,15 +470,21 @@ private struct FilteredNodeList: View {
 			// Recompute the displayed list on a gentle cadence instead of inside `body`.
 			// During live ingestion every packet writes to SwiftData; running displayNodes
 			// (a scan over the whole node set) per write pegged the main thread on reconnect
-			// with a large DB. ~3/sec is imperceptible and keeps CPU sane. The scan only runs
-			// while the Nodes tab is frontmost — TabView keeps this view alive on other tabs
-			// (and this task re-fires on every tab switch), so the guard comes first; entering
-			// the tab re-fires the task and refreshes immediately.
-			guard router.selectedTab == .nodes else { return }
+			// with a large DB. ~3/sec is imperceptible and keeps CPU sane. The full scan only
+			// runs while the Nodes tab is frontmost — TabView keeps this view alive on other
+			// tabs (and this task re-fires on every tab switch), so entering the tab refreshes
+			// immediately. While parked on another tab the loop still ticks, but only to drop
+			// entries whose nodes have been deleted (cap evictions keep running during
+			// ingestion): the stale snapshot otherwise holds dead nodes for as long as the
+			// user stays away, and any row re-evaluation in that window hits them.
 			refreshDisplayedNodes()
 			while !Task.isCancelled {
 				try? await Task.sleep(for: .milliseconds(350))
-				refreshDisplayedNodes()
+				if router.selectedTab == .nodes {
+					refreshDisplayedNodes()
+				} else {
+					purgeDeadDisplayedNodes()
+				}
 			}
 		}
 	}
@@ -409,9 +492,21 @@ private struct FilteredNodeList: View {
 	private func refreshDisplayedNodes() {
 		// Accessing any property on a ModelContext whose container was replaced can trap in SwiftData.
 		guard boundContainerGeneration == PersistenceController.shared.containerGeneration else { return }
+		guard router.selectedTab == .nodes else { return }
 		let allNodes = (try? context.fetch(makeNodeFetchDescriptor())) ?? []
 		replaceDisplayedNodesIfNeeded(with: displayNodes(from: allNodes, activeNodeNum: accessoryManager.activeDeviceNum))
 		router.updateNodeIndex(from: allNodes)
+	}
+
+	/// Drops entries whose backing node has been deleted, without the full fetch/sort of a
+	/// real refresh — cheap enough to run while the tab is parked in the background.
+	/// `modelContext`/`isDeleted` are safe to read on a dead object; persisted properties are not.
+	private func purgeDeadDisplayedNodes() {
+		guard boundContainerGeneration == PersistenceController.shared.containerGeneration else { return }
+		let live = displayedNodes.filter { $0.node.modelContext != nil && !$0.node.isDeleted }
+		if live.count != displayedNodes.count {
+			displayedNodes = live
+		}
 	}
 
 	@ViewBuilder
@@ -427,13 +522,22 @@ private struct FilteredNodeList: View {
 		} label: {
 			Label("Display name", systemImage: "person.crop.circle")
 		}
+		// Status message the connected node broadcasts to the mesh. Only for your own
+		// node, with the same firmware 2.8+ gate the old Settings entry used.
+		if node.num == connectedNode?.num, accessoryManager.supportsStatusMessage {
+			Button {
+				nodeForStatusMessageEdit = node
+			} label: {
+				Label("Status Message", systemImage: "text.bubble")
+			}
+		}
 		if let connectedNode {
 			FavoriteNodeButton(node: node)
 			if let user = node.user {
 				NodeAlertsButton(context: context, node: node, user: user)
 			}
 			if connectedNode.num != node.num {
-				if !(node.user?.unmessagable ?? true) {
+				if node.user?.showsDirectMessageAction == true {
 					Button(action: {
 						if let url = URL(string: "meshtastic:///messages?userNum=\(node.num)") {
 							UIApplication.shared.open(url)
@@ -511,15 +615,13 @@ private struct NodeListFilterLookup {
 	private static func fetchEnvironmentNodeNums(nodeNums: [Int64], context: ModelContext) -> Set<Int64> {
 		guard !nodeNums.isEmpty else { return [] }
 		let metricsType: Int32 = 1
-		let descriptor = FetchDescriptor<TelemetryEntity>(
-			predicate: #Predicate<TelemetryEntity> {
-				$0.metricsType == metricsType
-				&& $0.nodeTelemetry != nil
-				&& ($0.nodeTelemetry.flatMap { nodeNums.contains($0.num) } ?? false)
-			}
+		var descriptor = FetchDescriptor<TelemetryEntity>(
+			predicate: TelemetryEntity.predicate(forNodes: nodeNums, metricsType: metricsType)
 		)
+		// Only the node number is read, and this matches every environment row of every node.
+		descriptor.propertiesToFetch = [\.nodeNum]
 		let metrics = (try? context.fetch(descriptor)) ?? []
-		return Set(metrics.compactMap { $0.nodeTelemetry?.num })
+		return Set(metrics.compactMap(\.ownerNodeNum))
 	}
 
 	private static func fetchDistanceNodeNums(
@@ -589,6 +691,13 @@ fileprivate extension NodeFilterParameters {
 				return false
 			}
 			if lastHeard < threshold { return false }
+		}
+
+		if hidesUnheardOnCurrentLora && node.isUnheardOnCurrentLora { return false }
+
+		// Signed filter
+		if isSigned {
+			if !node.hasXeddsaSigned { return false }
 		}
 
 		// Encrypted filter (requires relationship traversal)

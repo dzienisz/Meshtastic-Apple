@@ -1,13 +1,14 @@
 import MeshtasticProtobufs
 import OSLog
 import SwiftUI
-#if !targetEnvironment(macCatalyst)
+#if !targetEnvironment(macCatalyst) && !os(visionOS)
 import Translation
 #endif
 
 struct MessageText: View {
 	@Environment(\.modelContext) private var context
 	@EnvironmentObject var accessoryManager: AccessoryManager
+	@EnvironmentObject private var router: Router
 
 	let message: MessageEntity
 	let tapBackDestination: MessageDestination
@@ -16,6 +17,7 @@ struct MessageText: View {
 	let onTapback: () -> Void
 	// State for handling channel URL sheet
 	@State private var saveChannelLink: SaveChannelLinkData?
+	@State private var pendingContact: PendingContact?
 	@State private var isShowingDeleteConfirmation = false
 	@State private var isShowingTranslationPresentation = false
 
@@ -30,11 +32,13 @@ struct MessageText: View {
 					addChannels: link.add,
 					accessoryManager: accessoryManager
 				)
+				.trackScreen(.saveChannelQRCode)
 				.presentationDetents([.large])
-				#if !targetEnvironment(macCatalyst)
+				#if !targetEnvironment(macCatalyst) && !os(visionOS)
 				.presentationDragIndicator(.visible)
 				#endif
 			}
+			.contactImportSheet($pendingContact, accessoryManager: accessoryManager)
 			.confirmationDialog(
 				"Are you sure you want to delete this message?",
 				isPresented: $isShowingDeleteConfirmation,
@@ -59,7 +63,7 @@ struct MessageText: View {
 
 	private var canTranslate: Bool {
 		guard !sourceMessageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-		#if targetEnvironment(macCatalyst)
+		#if targetEnvironment(macCatalyst) || os(visionOS)
 		return false
 		#else
 		if #available(iOS 17.4, macOS 14.4, *) {
@@ -70,7 +74,7 @@ struct MessageText: View {
 	}
 
 	private var messageContent: some View {
-		#if !targetEnvironment(macCatalyst)
+		#if !targetEnvironment(macCatalyst) && !os(visionOS)
 		if #available(iOS 17.4, macOS 14.4, *), canTranslate {
 			return AnyView(
 				baseMessageContent
@@ -90,21 +94,23 @@ struct MessageText: View {
 		return AnyView(baseMessageContent)
 	}
 
-	private func underlineLinks(in source: AttributedString) -> AttributedString {
+	private func colorLinks(in source: AttributedString) -> AttributedString {
 		var result = source
 		let linkColor = Color("Colors/MeshtasticLink")
 		for run in result.runs where run.link != nil {
-			result[run.range].underlineStyle = .single
 			result[run.range].foregroundColor = linkColor
 		}
 		return result
 	}
 
 	private var baseMessageContent: some View {
-		let payload = message.displayedMarkdownPayload
+		let payload = MentionParser.resolveMentions(
+			in: message.displayedMarkdownPayload,
+			context: context
+		)
 		return Group {
 			if let attributed = try? AttributedString(markdown: payload, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-				Text(underlineLinks(in: attributed))
+				Text(colorLinks(in: attributed))
 			} else {
 				Text(LocalizedStringKey(payload))
 			}
@@ -117,7 +123,7 @@ struct MessageText: View {
 			.padding(.vertical, 10)
 			.padding(.horizontal, 8)
 			.foregroundColor(isCurrentUser ? .white : Color("Colors/MeshtasticBubbleText"))
-			.background(isCurrentUser ? .accentColor : Color("Colors/MeshtasticBubble"))
+			.background(isCurrentUser ? Color.accentFill : Color("Colors/MeshtasticBubble"))
 			.cornerRadius(15)
 			.overlay(messageOverlays)
 			.contextMenu {
@@ -217,10 +223,20 @@ struct MessageText: View {
 
 	private func handleURL(_ url: URL) -> OpenURLAction.Result {
 		saveChannelLink = nil
+		// Handle meshtastic:/// deep links — node navigation from @mention taps
+		if url.scheme == "meshtastic",
+		   let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+		   components.path == "/nodes",
+		   let nodeNumStr = components.queryItems?.first(where: { $0.name == "nodenum" })?.value,
+		   let nodeNum = Int64(nodeNumStr) {
+			router.navigateToNodeDetail(nodeNum: nodeNum)
+			return .handled
+		}
 		var addChannels = false
 		if ContactURLHandler.canHandle(url) {
-			// Handle contact URL
-			ContactURLHandler.handleContactUrl(url: url, accessoryManager: AccessoryManager.shared)
+			if let pending = ContactURLHandler.makePendingContact(from: url, accessoryManager: accessoryManager) {
+				pendingContact = pending
+			}
 			return .handled // Prevent default browser opening
 		} else if MeshtasticChannelURL.canHandle(url) {
 			do {

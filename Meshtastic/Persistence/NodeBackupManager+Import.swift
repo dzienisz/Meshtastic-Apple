@@ -20,11 +20,18 @@ extension NodeBackupManager {
 			dst.channel = src.channel
 			dst.favorite = src.favorite
 			dst.firstHeard = src.firstHeard
+			dst.hasBeenAdministered = src.hasBeenAdministered
+			dst.hasXeddsaSigned = src.hasXeddsaSigned
+			dst.heardOnCurrentLora = src.heardOnCurrentLora
 			dst.hopsAway = src.hopsAway
+			dst.id = src.id
 			dst.ignored = src.ignored
+			dst.isKeyManuallyVerified = src.isKeyManuallyVerified
 			dst.lastHeard = src.lastHeard
+			dst.nodeStatus = src.nodeStatus
 			dst.num = src.num
 			dst.peripheralId = src.peripheralId
+			dst.powerChannelLabels = src.powerChannelLabels
 			dst.rssi = src.rssi
 			dst.sessionExpiration = src.sessionExpiration
 			dst.sessionPasskey = src.sessionPasskey
@@ -166,6 +173,9 @@ extension NodeBackupManager {
 	nonisolated static func importTelemetry(from backupContext: ModelContext, into liveContext: ModelContext, nodesByNum: [Int64: NodeInfoEntity]) throws {
 		let backupTelemetry = try backupContext.fetch(FetchDescriptor<TelemetryEntity>())
 		for src in backupTelemetry {
+			// Backups made before `nodeNum` existed only link the row to its node, so fall back
+			// to that. Rows whose node is not in the backup were never shown, so they stay out.
+			guard let nodeNum = src.ownerNodeNum, nodesByNum[nodeNum] != nil else { continue }
 			let dst = TelemetryEntity()
 			dst.metricsType = src.metricsType
 			dst.time = src.time
@@ -188,6 +198,12 @@ extension NodeBackupManager {
 			dst.numTxRelay = src.numTxRelay
 			dst.numTxRelayCanceled = src.numTxRelayCanceled
 			dst.noiseFloor = src.noiseFloor
+			dst.pm10Environmental = src.pm10Environmental
+			dst.pm10Standard = src.pm10Standard
+			dst.pm25Environmental = src.pm25Environmental
+			dst.pm25Standard = src.pm25Standard
+			dst.pm100Environmental = src.pm100Environmental
+			dst.pm100Standard = src.pm100Standard
 			dst.powerCh1Current = src.powerCh1Current
 			dst.powerCh1Voltage = src.powerCh1Voltage
 			dst.powerCh2Current = src.powerCh2Current
@@ -212,9 +228,7 @@ extension NodeBackupManager {
 			dst.windGust = src.windGust
 			dst.windLull = src.windLull
 			dst.windSpeed = src.windSpeed
-			if let srcNode = src.nodeTelemetry, let liveNode = nodesByNum[srcNode.num] {
-				dst.nodeTelemetry = liveNode
-			}
+			dst.nodeNum = nodeNum
 			liveContext.insert(dst)
 		}
 	}
@@ -248,6 +262,7 @@ extension NodeBackupManager {
 			dst.rssi = src.rssi
 			dst.showTranslatedMessage = src.showTranslatedMessage
 			dst.snr = src.snr
+			dst.xeddsaSigned = src.xeddsaSigned
 			if let fromNum = src.fromUser?.num, let liveUser = usersByNum[fromNum] {
 				dst.fromUser = liveUser
 			}
@@ -271,9 +286,19 @@ extension NodeBackupManager {
 			dst.lastUpdatedBy = src.lastUpdatedBy
 			dst.latitudeI = src.latitudeI
 			dst.locked = src.locked
+			dst.isLocal = src.isLocal
 			dst.longDescription = src.longDescription
 			dst.longitudeI = src.longitudeI
 			dst.name = src.name
+			dst.geofenceRadius = src.geofenceRadius
+			dst.hasBoundingBox = src.hasBoundingBox
+			dst.boundingBoxLatitudeNorthI = src.boundingBoxLatitudeNorthI
+			dst.boundingBoxLatitudeSouthI = src.boundingBoxLatitudeSouthI
+			dst.boundingBoxLongitudeEastI = src.boundingBoxLongitudeEastI
+			dst.boundingBoxLongitudeWestI = src.boundingBoxLongitudeWestI
+			dst.notifyOnEnter = src.notifyOnEnter
+			dst.notifyOnExit = src.notifyOnExit
+			dst.notifyFavoritesOnly = src.notifyFavoritesOnly
 			liveContext.insert(dst)
 		}
 	}
@@ -292,6 +317,8 @@ extension NodeBackupManager {
 			dst.sent = src.sent
 			dst.snr = src.snr
 			dst.time = src.time
+			dst.sentAt = src.sentAt
+			dst.rateLimited = src.rateLimited
 			dst.fromNum = src.fromNum
 			dst.toNum = src.toNum
 			if let srcNode = src.node, let liveNode = nodesByNum[srcNode.num] {

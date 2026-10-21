@@ -23,8 +23,11 @@ struct MeshtasticAppleApp: App {
 	private let persistenceController: PersistenceController?
 	private let accessoryManager: AccessoryManager
 	@Environment(\.scenePhase) var scenePhase
-	@State var saveChannelLink: SaveChannelLinkData?
-	@State var incomingUrl: URL?
+	#if os(visionOS)
+	@Environment(\.openWindow) private var openWindow
+	/// The showcase's immersion: progressive by default, with mixed and full offered.
+	@State private var showcaseImmersion: any ImmersionStyle = ProgressiveImmersionStyle.progressive(0.35...1.0, initialAmount: 0.7)
+	#endif
 
 	private static let isRunningTests = NSClassFromString("XCTestCase") != nil || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
 	private static let isChirpyOTADemo: Bool = {
@@ -37,10 +40,6 @@ struct MeshtasticAppleApp: App {
 	private static var shouldInitializeAppServices: Bool {
 		!isRunningTests && !isChirpyOTADemo
 	}
-	/// TipKit configuration must run once per process; the owning `.task` re-runs whenever the
-	/// database-reset gate remounts the main tree after a node switch.
-	@MainActor private static var hasConfiguredTips = false
-
 	init() {
 
 		let persistenceController: PersistenceController? = Self.shouldInitializeAppServices ? PersistenceController.shared : nil
@@ -54,9 +53,7 @@ struct MeshtasticAppleApp: App {
 		let performanceSeedDisablesDiscovery = false
 #endif
 
-		let appState = AppState(
-			router: Router()
-		)
+		let appState = AppState()
 
 		if Self.shouldInitializeAppServices {
 			// Initialize Datadog
@@ -91,13 +88,17 @@ struct MeshtasticAppleApp: App {
 
 			var rumConfig = RUM.Configuration(
 				applicationID: appID,
-				swiftUIViewsPredicate: DefaultSwiftUIRUMViewsPredicate(),
+				swiftUIViewsPredicate: MeshtasticSwiftUIViewsPredicate(),
 				swiftUIActionsPredicate: DefaultSwiftUIRUMActionsPredicate(isLegacyDetectionEnabled: true),
 				trackBackgroundEvents: true
 			)
 			// Disable expensive continuous monitoring to reduce idle CPU (~15% savings)
 			rumConfig.longTaskThreshold = nil  // Disables LongTaskObserver CFRunLoop hook
 			rumConfig.vitalsUpdateFrequency = nil    // Disables VitalRefreshRateReader display link
+			// Report main-thread hangs over 2s as RUM errors with stacks. Unlike the long-task
+			// observer this is a lightweight watchdog thread, and without it hang reports are
+			// invisible — users report them by word of mouth and Datadog shows nothing.
+			rumConfig.appHangThreshold = 2
 			RUM.enable(with: rumConfig)
 
 		}
@@ -116,17 +117,20 @@ struct MeshtasticAppleApp: App {
 		self._appState = StateObject(wrappedValue: appState)
 
 		self.persistenceController = persistenceController
-		// Wire up router
 #if os(iOS)
-		self.appDelegate.router = appState.router
+		self.appDelegate.appState = appState
 #endif
+		// Control Center controls open a screen the way a notification tap does.
+		MeshScreenOpener.handler = { url in
+			appState.pendingRoute = PendingRoute(url: url)
+		}
 
 #if DEBUG
 		if let persistenceController, let performanceSeedConfiguration {
 			PerformanceSeedData.seedIfNeeded(
 				using: persistenceController,
 				configuration: performanceSeedConfiguration,
-				router: appState.router
+				appState: appState
 			)
 		}
 		// Independent of the node performance seed: seeds a sample Discovery session with beacons
@@ -138,6 +142,10 @@ struct MeshtasticAppleApp: App {
 #endif
 
 		if Self.shouldInitializeAppServices {
+			// One-time copy of the node number onto telemetry saved by earlier versions.
+			if let persistenceController {
+				TelemetryNodeNumBackfill.startIfNeeded(persistence: persistenceController, appState: appState)
+			}
 			// Initialize map data manager
 			MapDataManager.shared.initialize()
 
@@ -176,72 +184,117 @@ struct MeshtasticAppleApp: App {
 					try? await manager.connect(to: device)
 				}
 			}
+			// Simulator terrain: `--meshtastic-download-terrain minLon,minLat,maxLon,maxLat` downloads
+			// a terrain-only region for the box, the same way the Offline Maps screen does.
+			if let flagIndex = arguments.firstIndex(of: "--meshtastic-download-terrain"),
+			   arguments.indices.contains(flagIndex + 1) {
+				let parts = arguments[flagIndex + 1].split(separator: ",").compactMap { Double($0) }
+				if parts.count == 4 {
+					let bounds = GeoBounds(minLon: parts[0], minLat: parts[1], maxLon: parts[2], maxLat: parts[3])
+					Task {
+						try? await Task.sleep(for: .seconds(2))
+						OfflineMapManager.shared.loadIfNeeded()
+						OfflineMapManager.shared.startDownload(name: "Terrain", bounds: bounds, detail: .standard, includeBasemap: false, includeTerrain: true) { region in
+							Logger.services.info("🧪 [App] Terrain download \(region != nil ? "finished" : "failed", privacy: .public) (launch argument)")
+						}
+					}
+				}
+			}
+			// Simulator basemap: `--meshtastic-download-basemap minLon,minLat,maxLon,maxLat` downloads
+			// a basemap with terrain for the box, replacing the region it overlaps.
+			if let flagIndex = arguments.firstIndex(of: "--meshtastic-download-basemap"),
+			   arguments.indices.contains(flagIndex + 1) {
+				let parts = arguments[flagIndex + 1].split(separator: ",").compactMap { Double($0) }
+				if parts.count == 4 {
+					let bounds = GeoBounds(minLon: parts[0], minLat: parts[1], maxLon: parts[2], maxLat: parts[3])
+					Task {
+						try? await Task.sleep(for: .seconds(2))
+						let manager = OfflineMapManager.shared
+						manager.loadIfNeeded()
+						let replacing = manager.overlappingRegion(with: bounds)
+						manager.startDownload(name: "Basemap", bounds: bounds, detail: .standard, replacing: replacing) { region in
+							Logger.services.info("🧪 [App] Basemap download \(region != nil ? "finished" : "failed", privacy: .public) (launch argument)")
+						}
+					}
+				}
+			}
+			#if os(visionOS)
+			// Simulator screenshots: open the spatial map volume without tapping through the map.
+			if arguments.contains("--meshtastic-open-spatial-map") {
+				let openWindow = openWindow
+				Task {
+					try? await Task.sleep(for: .seconds(3))
+					openWindow(id: SpatialMapScene.id, value: SpatialMapSceneKey.shared)
+				}
+			}
+			#endif
 #endif
 		}
 	}
 
-	/// Single dispatch point for every URL the app receives — universal links
-	/// (user activities), custom-scheme opens, and file opens all route here.
-	private func dispatchIncomingURL(_ url: URL, fromActivity: Bool) {
-		if url.isFileURL {
-			// "Open in Meshtastic" from the Share Sheet / Files app / drag-and-drop —
-			// distinct from the meshtastic:// scheme handled below.
-			appState.router.importMapFile(url: url)
-		} else if ContactURLHandler.canHandle(url) {
-			ContactURLHandler.handleContactUrl(url: url, accessoryManager: accessoryManager)
-		} else if MeshtasticChannelURL.canHandle(url) {
-			handleChannelLinkURL(url, fromActivity: fromActivity)
-		} else if url.absoluteString.lowercased().contains("meshtastic:///") {
-			appState.router.route(url: url)
+	/// Runs the work the app owes at backgrounding — the main-context save, then the
+	/// entity-cap eviction — under one background task assertion.
+	///
+	/// `beginBackgroundTask` is what asks iOS for time to finish work after the app leaves
+	/// the screen. Both pieces need it: between them they are the app's heaviest SwiftData
+	/// work and they start at the moment iOS begins charging for background CPU. The
+	/// expiration handler fires shortly before the grant runs out and sets the flag the
+	/// chunked eviction checks, so the pass ends at a committed boundary and whatever is
+	/// left waits for the next background transition.
+	///
+	/// The save goes first and stays on the main actor: it is the one that must happen (it
+	/// is flushing edits the user just made), while the eviction is housekeeping that can
+	/// resume later.
+	///
+	/// On Mac Catalyst the assertion is a no-op the system accepts, so the same path runs
+	/// everywhere without a platform branch here.
+	private func startBackgroundMaintenance(_ persistenceController: PersistenceController) {
+		// Numbered, because backgrounding twice in quick succession leaves two passes in
+		// flight and each has its own grant. The handler quotes its own number so an older
+		// pass expiring cannot stop a newer one.
+		let generation = MeshPackets.beginMaintenance()
+		var taskID = UIBackgroundTaskIdentifier.invalid
+		taskID = UIApplication.shared.beginBackgroundTask(withName: "BackgroundMaintenance") {
+			MeshPackets.expireMaintenance(generation)
+			Logger.services.warning("🗄️ [Caps] Background time expired; eviction will stop at the next chunk")
+		}
+		Task { @MainActor in
+			do {
+				try persistenceController.container.mainContext.save()
+				Logger.services.info("💾 [App] Saved SwiftData context when the app went to the background.")
+			} catch {
+				Logger.services.error("💥 [App] Failed to save context when the app goes to the background.")
+			}
+			await MeshPackets.shared.enforceEntityCapsAndSave()
+			// Nothing to clear: the next pass takes a new number, which supersedes any
+			// expiry recorded against this one.
+			if taskID != .invalid {
+				UIApplication.shared.endBackgroundTask(taskID)
+			}
 		}
 	}
 
-	@discardableResult
-	private func handleChannelLinkURL(_ url: URL, fromActivity: Bool) -> Bool {
-		// Reset the state before processing a new URL
-		self.saveChannelLink = nil
-
-		guard MeshtasticChannelURL.canHandle(url) else {
-			return false
-		}
-
-		let channelLink: MeshtasticChannelURL
-		do {
-			channelLink = try MeshtasticChannelURL.parse(url.absoluteString)
-		} catch {
-			Logger.mesh.error("Could not parse channel URL: \(error.localizedDescription, privacy: .public)")
-			return false
-		}
-
-		self.saveChannelLink = SaveChannelLinkData(data: channelLink.payload, add: channelLink.addChannels)
-		Logger.services.debug("Add Channel \(channelLink.addChannels, privacy: .public)")
-
-		// Log based on the calling context
-		let source = fromActivity ? "User Activity" : "Open URL"
-		Logger.mesh.debug("User wants to open a Channel Settings URL (\(source, privacy: .public))")
-		return true
-	}
+	/// The main window, so another window can open one when none is showing.
+	static let mainWindowID = "main"
 
 	var body: some Scene {
-		WindowGroup {
+		WindowGroup(id: Self.mainWindowID) {
 			Group {
 			if Self.isRunningTests {
 				Color.clear
 			} else if Self.isChirpyOTADemo {
+				// Kept out of the release build's view type on purpose, not just behind a flag
+				// that is false there: the automatic RUM view naming reflects over these
+				// branches, and this type — which can never be on screen in release — was
+				// being reported as the view for everything that happened at the app root.
+				// See `trackScreen`.
+				#if DEBUG
 				FirmwareUpdateGameDemoHost()
-			} else if appState.isDatabaseResetting {
-				// Unmount the WHOLE SwiftData-bound tree — including the `.modelContainer`
-				// modifier in mainAppContent — while a node switch clears the store. The
-				// modifier's SwiftData↔SwiftUI bridge observes save notifications process-wide
-				// and never rebinds (its attachment point is structurally stable, so
-				// `.id(databaseResetID)` deeper down can't recreate it); stale bridges from any
-				// container the app has moved off of trap on the next save callout (the "silent
-				// exit" flavor of Datadog 324bff02 — no crash report, EXC_BREAKPOINT in
-				// _SwiftData_SwiftUI, caught live in lldb). This gate plus the process-lifetime
-				// container (see backupCurrentAndRestoreDatabase) is the pair that ended it.
-				DatabaseResettingPlaceholder()
-			} else {
-				mainAppContent
+				#endif
+			} else if let persistenceController {
+				// Stays mounted across a node switch so this window's router survives.
+				// The SwiftData tree unmounts inside MainScene.
+				MainScene(persistenceController: persistenceController)
 			}
 			}
 			.onChange(of: lockdownCoordinator.state) { _, newState in
@@ -258,22 +311,32 @@ struct MeshtasticAppleApp: App {
 			// backgrounding the demo must not touch (or force-unwrap) SwiftData.
 			guard Self.shouldInitializeAppServices, let persistenceController else { return }
 			accessoryManager.isInBackground = (newScenePhase == .background)
+			#if os(visionOS)
+			// Grows the Spatial Map's terrain with the mesh while the app is open.
+			SpatialTerrainKeeper.shared.setAppActive(newScenePhase == .active) { [appState] in
+				appState.isDatabaseResetting ? nil : persistenceController.container
+			}
+			#endif
 			switch newScenePhase {
 			case .background:
 				Logger.services.info("🎬 [App] Scene is in the background")
 				accessoryManager.appDidEnterBackground()
-				do {
-					try persistenceController.container.mainContext.save()
-					Logger.services.info("💾 [App] Saved SwiftData context when the app went to the background.")
-
-				} catch {
-
-					Logger.services.error("💥 [App] Failed to save context when the app goes to the background.")
-				}
+				// Entity-cap evictions run now, while no view is mid-render on the
+				// doomed entities. Foregrounded, the packet actor defers them.
+				//
+				// Held under a background task assertion: this is the app's heaviest
+				// SwiftData work and it starts at the moment iOS begins charging for
+				// background CPU. Without the assertion there is no time granted and no
+				// warning before the process is killed for the budget, which reads as a
+				// Background High CPU termination. The expiration handler stops the
+				// eviction on a committed chunk boundary instead.
+				MeshPackets.appIsActive = false
+				startBackgroundMaintenance(persistenceController)
 			case .inactive:
 				Logger.services.info("🎬 [App] Scene is inactive")
 			case .active:
 				Logger.services.info("🎬 [App] Scene is active")
+				MeshPackets.appIsActive = true
 				accessoryManager.appDidBecomeActive()
 				appState.refreshBadgeCount(context: persistenceController.container.mainContext)
 			@unknown default:
@@ -283,7 +346,6 @@ struct MeshtasticAppleApp: App {
 		.environmentObject(appState)
 		.environmentObject(accessoryManager)
 		.environmentObject(lockdownCoordinator)
-		.environmentObject(appState.router)
 		.environmentObject(MeshtasticAPI.shared)
 
 			WindowGroup("Mesh Map", id: "meshmap-window") {
@@ -300,7 +362,6 @@ struct MeshtasticAppleApp: App {
 					.environmentObject(appState)
 					.environmentObject(accessoryManager)
 					.environmentObject(lockdownCoordinator)
-					.environmentObject(appState.router)
 					.environmentObject(MeshtasticAPI.shared)
 				}
 			}
@@ -309,95 +370,46 @@ struct MeshtasticAppleApp: App {
 		#if os(visionOS)
 		.windowStyle(.plain)
 		#endif
-	}
 
-	/// The full SwiftData-bound app tree, extracted from the WindowGroup builder both to keep
-	/// the scene-level expression type-checkable in reasonable time (the four-branch builder
-	/// with this chain inlined blew Swift's type-check budget on CI) and so the database-reset
-	/// gate can unmount it — `.modelContainer` included — as one unit.
-	@ViewBuilder
-	private var mainAppContent: some View {
-		EventFirmwareTintScope {
-					ContentView(
-						appState: appState,
-						router: appState.router
-					)
-				// Rebuild the whole view tree (and re-run every @Query) after a node-switch
-				// restore so views drop the previous node's cached objects. See AppState.databaseResetID.
-				.id(appState.databaseResetID)
-				.sheet(item: $saveChannelLink
-				) { link in
-					SaveChannelQRCode(
-						channelSetLink: link.data,
-						addChannels: link.add, // <-- Uses the now reliable 'add' boolean
-						accessoryManager: accessoryManager				)
-					.presentationDetents([.large])
-					#if !targetEnvironment(macCatalyst)
-					.presentationDragIndicator(.visible)
-					#endif
-					}
-					.sheet(item: $appState.pendingContactToAdd) { pendingContact in
-						AddContactConfirmationView(
-							pendingContact: pendingContact,
-							accessoryManager: accessoryManager
-						)
-						.presentationDetents([.medium, .large])
-						#if !targetEnvironment(macCatalyst)
-						.presentationDragIndicator(.visible)
-						#endif
-					}
-					.onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { userActivity in
-						Logger.mesh.debug("Browsing web user activity received")
-						self.incomingUrl = userActivity.webpageURL
-						self.saveChannelLink = nil
-
-						if let url = userActivity.webpageURL {
-							dispatchIncomingURL(url, fromActivity: true)
-						}
-
-						if self.saveChannelLink != nil {
-							Logger.mesh.debug("User wants to open Channel Settings URL")
-						}
-					}
-					.onOpenURL(perform: { (url) in
-						Logger.mesh.debug("URL received")
-						self.incomingUrl = url
-
-						dispatchIncomingURL(url, fromActivity: false)
-					})
-					// Keep the badge in sync with read-state changes that happen outside
-					// the message lists (Siri/CarPlay read-aloud, background ingest) —
-					// previously those only reconciled on the next scene-active pass.
-					.onReceive(
-						NotificationCenter.default.publisher(for: .meshMessagesDidChange)
-							.debounce(for: .seconds(1), scheduler: DispatchQueue.main)
-					) { _ in
-						guard let persistenceController else { return }
-						appState.refreshBadgeCount(context: persistenceController.container.mainContext)
-					}
+		#if os(visionOS)
+		// The mesh on a terrain model. Same gates as the Mesh Map window, and one constant key
+		// so every entry point brings the same volume forward.
+		WindowGroup("Spatial Map", id: SpatialMapScene.id, for: SpatialMapSceneKey.self) { _ in
+			if Self.shouldInitializeAppServices, let persistenceController, !appState.isDatabaseResetting {
+				EventFirmwareTintScope {
+					SpatialMapWindow()
+						.id(appState.databaseResetID)
 				}
-				.task {
-					// Skip TipKit entirely during marketing screenshot capture so tip popovers never
-					// appear in the shots (unconfigured TipKit displays nothing). The once-guard
-					// matters now that this branch remounts after every node switch (the database
-					// reset gate above) — Tips.configure must not re-run per switch.
-					if !Self.hasConfiguredTips, !CommandLine.arguments.contains("--marketing-capture") {
-						Self.hasConfiguredTips = true
-						try? Tips.configure(
-							[
-								// Reset which tips have been shown and what parameters have been tracked, useful during testing and for this sample project
-								.datastoreLocation(.applicationDefault),
-								// When should the tips be presented? If you use .immediate, they'll all be presented whenever a screen with a tip appears.
-								// You can adjust this on per tip level as well
-								.displayFrequency(.immediate)
-							]
-						)
-					}
-				}
-				.modelContainer(persistenceController!.container)
+				.modelContainer(persistenceController.container)
 				.environmentObject(appState)
 				.environmentObject(accessoryManager)
-				.environmentObject(appState.router)
+				.environmentObject(lockdownCoordinator)
 				.environmentObject(MeshtasticAPI.shared)
+			}
+		}
+		.windowStyle(.volumetric)
+		.defaultSize(width: SpatialVolumeFit.defaultSize.x, height: SpatialVolumeFit.defaultSize.y, depth: SpatialVolumeFit.defaultSize.z, in: .meters)
+		.windowResizability(.contentSize)
+		.volumeWorldAlignment(.gravityAligned)
+		.restorationBehavior(.disabled)
+		.handlesExternalEvents(matching: [])
+
+		// The mesh as radios in a showcase. Same gates and environment as the spatial map volume.
+		ImmersiveSpace(id: ShowcaseScene.id) {
+			if Self.shouldInitializeAppServices, let persistenceController, !appState.isDatabaseResetting {
+				EventFirmwareTintScope {
+					ShowcaseSpace()
+						.id(appState.databaseResetID)
+				}
+				.modelContainer(persistenceController.container)
+				.environmentObject(appState)
+				.environmentObject(accessoryManager)
+				.environmentObject(lockdownCoordinator)
+				.environmentObject(MeshtasticAPI.shared)
+			}
+		}
+		.immersionStyle(selection: $showcaseImmersion, in: .mixed, .progressive(0.35...1.0, initialAmount: 0.7), .full)
+		.immersiveEnvironmentBehavior(.coexist)
+		#endif
 	}
 }

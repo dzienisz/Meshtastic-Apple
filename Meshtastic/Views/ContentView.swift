@@ -36,6 +36,7 @@ struct ContentView: View {
 	/// affordance, so this stays non-dismissable — only the coordinator leaving a
 	/// blocking state clears it.
 	@State private var isShowingLockdownGate: Bool = false
+	@State private var isShowingFirmwareGate: Bool = false
 
 	init(appState: AppState, router: Router) {
 		self.appState = appState
@@ -55,6 +56,10 @@ struct ContentView: View {
 			)
 			.fullScreenCover(isPresented: $isShowingLockdownGate) {
 				LockdownSheet()
+					.trackScreen(.lockdown)
+			}
+			.fullScreenCover(isPresented: $isShowingFirmwareGate) {
+				FirmwareUpdateGate()
 			}
 			.onAppear {
 				// Trust the first-launch flag only when this process can actually read it. Launched
@@ -69,6 +74,7 @@ struct ContentView: View {
 				// Present the gate if the device is already in a blocking state when
 				// this view appears.
 				isShowingLockdownGate = isLockdownGateActive
+				isShowingFirmwareGate = accessoryManager.firmwareUpdateRequired
 			}
 			.onChange(of: isLockdownGateActive) { _, active in
 				// Follow the coordinator's blocking state. The gate never closes from
@@ -76,6 +82,10 @@ struct ContentView: View {
 				// LockdownSheet exposes no dismiss control), so this is the only path
 				// that shows or hides it.
 				isShowingLockdownGate = active
+			}
+			.onChange(of: accessoryManager.firmwareUpdateRequired) { _, required in
+				// Same rule as the lockdown gate: only the manager's state opens or closes it.
+				isShowingFirmwareGate = required
 			}
 			.onChange(of: UserDefaults.showDeviceOnboarding) {_, newValue in
 				isShowingDeviceOnboardingFlow = newValue
@@ -86,7 +96,7 @@ struct ContentView: View {
 				// No-op unless launched with --marketing-capture (see MarketingCapture / PerformanceSeedData).
 				await MarketingCapture.runIfNeeded(router: router, accessoryManager: accessoryManager)
 				// No-op unless launched with `-switch-stress N` (node-switch crash harness).
-				await SwitchStress.runIfNeeded(accessoryManager: accessoryManager, appState: appState)
+				await SwitchStress.runIfNeeded(accessoryManager: accessoryManager, appState: appState, router: router)
 #endif
 			}
 	}
@@ -95,14 +105,23 @@ struct ContentView: View {
 
 	/// A custom binding that intercepts tab selection so that tapping the
 	/// already-active tab pops its navigation stack back to root.
+	///
+	/// **iOS 18+ only.** Its setter writes back into the `Router` its getter reads,
+	/// which the modern `Tab(value:)` API handles but iOS 17's legacy `TabView`
+	/// does not: during first layout iOS 17 re-drives the selection, the write
+	/// republishes, the body invalidates, and SwiftUI re-enters the attribute graph
+	/// until it trips `_assertionFailure` — a launch crash seen only on iOS 17
+	/// (Datadog issue bb11da86, 100% iOS 17, all at ApplicationLaunch). Same family
+	/// as the lockdown-gate binding fixed above. iOS 17 binds `Router.selectedTab`
+	/// directly instead and forgoes tap-to-pop.
 	private var tabSelection: Binding<NavigationState.Tab> {
 		Binding(
-			get: { appState.router.selectedTab },
+			get: { router.selectedTab },
 			set: { newTab in
-				if newTab == appState.router.selectedTab {
-					appState.router.popToRoot(tab: newTab)
+				if newTab == router.selectedTab {
+					router.popToRoot(tab: newTab)
 				}
-				appState.router.selectedTab = newTab
+				router.selectedTab = newTab
 			}
 		)
 	}
@@ -124,7 +143,7 @@ struct ContentView: View {
 		if appState.isDatabaseResetting {
 			DatabaseResettingPlaceholder()
 		} else {
-			ActiveContent(appState: appState, router: router) {
+			ActiveContent(appState: appState, router: router, isOnboarding: isShowingDeviceOnboardingFlow) {
 				tabContent
 			}
 		}
@@ -137,6 +156,10 @@ struct ContentView: View {
 		@ObservedObject var appState: AppState
 		@ObservedObject var router: Router
 		@EnvironmentObject var accessoryManager: AccessoryManager
+		/// True while the first-launch device-onboarding sheet is up. The event sheet
+		/// must not auto-present over it — two sheets presented from different levels
+		/// of the tree fight, and the event sheet ends up covering onboarding.
+		let isOnboarding: Bool
 		@Query private var eventFirmwareEditions: [EventFirmwareEntity]
 		@State private var isShowingEventFirmwareInfo: Bool = false
 		/// The post-event upgrade sheet auto-presents once per connect. ActiveContent is
@@ -145,10 +168,29 @@ struct ContentView: View {
 		@State private var hasAutoPresentedEventEnded: Bool = false
 		private let content: Content
 
-		init(appState: AppState, router: Router, @ViewBuilder content: () -> Content) {
+		init(
+			appState: AppState,
+			router: Router,
+			isOnboarding: Bool,
+			@ViewBuilder content: () -> Content
+		) {
 			self.appState = appState
 			self.router = router
+			self.isOnboarding = isOnboarding
 			self.content = content()
+		}
+
+		/// Once the event's end date has passed, surface the info sheet (with its
+		/// post-event update call to action) automatically on connect — parity with
+		/// Android's post-event upgrade prompt; hasEnded() is false without a valid
+		/// end date, so live/undated editions never nag. Held back while the
+		/// onboarding sheet is up, and retried when it closes.
+		private func autoPresentEndedEventIfNeeded() {
+			guard !isOnboarding, !hasAutoPresentedEventEnded,
+				  let presentation = eventPresentation,
+				  presentation.info.hasEnded() else { return }
+			hasAutoPresentedEventEnded = true
+			isShowingEventFirmwareInfo = true
 		}
 
 		private var eventPresentation: EventFirmwarePresentation? {
@@ -186,16 +228,12 @@ struct ContentView: View {
 						isShowingEventFirmwareInfo = false
 						return
 					}
-					// Once the event's end date has passed, surface the info sheet (with its
-					// post-event update call to action) automatically on connect — parity with
-					// Android's post-event upgrade prompt; hasEnded() is false without a valid
-					// end date, so live/undated editions never nag.
-					if let presentation = eventPresentation,
-					   presentation.info.hasEnded(),
-					   !hasAutoPresentedEventEnded {
-						hasAutoPresentedEventEnded = true
-						isShowingEventFirmwareInfo = true
-					}
+					autoPresentEndedEventIfNeeded()
+				}
+				.onChange(of: isOnboarding) { _, onboarding in
+					// Onboarding just finished — show the sheet we held back. Without this
+					// a first launch that connects during setup never gets the prompt.
+					if !onboarding { autoPresentEndedEventIfNeeded() }
 				}
 		}
 	}
@@ -206,72 +244,104 @@ struct ContentView: View {
 			TabView(selection: tabSelection) {
 				Tab("Messages", systemImage: "message", value: NavigationState.Tab.messages) {
 					Messages(
-						router: appState.router,
+						router: router,
 						unreadChannelMessages: $appState.unreadChannelMessages,
 						unreadDirectMessages: $appState.unreadDirectMessages
 					)
+					.trackScreen(NavigationState.Tab.messages.screenName)
 				}
 				.badge(appState.totalUnreadMessages)
 
 				Tab("Nodes", image: "custom.mesh.radio", value: NavigationState.Tab.nodes) {
 					NodeList()
+						.trackScreen(NavigationState.Tab.nodes.screenName)
 				}
 
 				Tab("Map", systemImage: "map", value: NavigationState.Tab.map) {
-					MeshMapMK(router: appState.router)
+					MeshMapMK(router: router)
+						.trackScreen(NavigationState.Tab.map.screenName)
 				}
 
 				Tab("Settings", systemImage: "gear", value: NavigationState.Tab.settings) {
 					Settings()
+						.trackScreen(NavigationState.Tab.settings.screenName)
 				}
 
 				Tab("Connect", systemImage: "link", value: NavigationState.Tab.connect) {
 					Connect(
-						router: appState.router
+						router: router
 					)
+					.trackScreen(NavigationState.Tab.connect.screenName)
 				}
 			}
 		} else {
-			TabView(selection: tabSelection) {
-				Messages(
-					router: appState.router,
-					unreadChannelMessages: $appState.unreadChannelMessages,
-					unreadDirectMessages: $appState.unreadDirectMessages
-				)
-				.tabItem {
-					Label("Messages", systemImage: "message")
+			// iOS 17 gets the legacy TabView, which differs from iOS 18's `Tab` in two
+			// ways that matter here. Its selection is bound straight to the stored
+			// @Published value rather than the side-effecting `tabSelection` (so no
+			// tap-to-pop on 17), and each tab's content is built lazily instead of all
+			// five roots — and their @Query subscriptions — being constructed during
+			// first layout. `Tab`'s @ViewBuilder closure gives iOS 18+ that laziness
+			// for free. Datadog issue bb11da86 is an attribute-graph trap at first
+			// layout seen only on iOS 17; shrinking what that pass has to build is the
+			// mitigation, and it also cuts the tab-switch cost on 17.
+			TabView(selection: $router.selectedTab) {
+				ForEach(LegacyTab.allCases) { tab in
+					LegacyTabContent(tab: tab, isActive: router.selectedTab == tab.value) {
+						legacyContent(for: tab)
+					}
+					.tabItem { tab.label }
+					.tag(tab.value)
+					.badge(tab == .messages ? appState.totalUnreadMessages : 0)
 				}
-				.tag(NavigationState.Tab.messages)
-				.badge(appState.totalUnreadMessages)
-
-				NodeList()
-				.tabItem {
-					Label("Nodes", image: "custom.mesh.radio")
-				}
-				.tag(NavigationState.Tab.nodes)
-
-				MeshMapMK(router: appState.router)
-				.tabItem {
-					Label("Map", systemImage: "map")
-				}
-				.tag(NavigationState.Tab.map)
-
-				Settings()
-				.tabItem {
-					Label("Settings", systemImage: "gear")
-				}
-				.tag(NavigationState.Tab.settings)
-
-				Connect(
-					router: appState.router
-				)
-				.tabItem {
-					Label("Connect", systemImage: "link")
-				}
-				.tag(NavigationState.Tab.connect)
 			}
 		}
 	}
+
+	/// Tabs for the iOS 17 legacy `TabView`, mirroring the iOS 18 `Tab` list.
+	private enum LegacyTab: String, CaseIterable, Identifiable {
+		case messages, nodes, map, settings, connect
+
+		var id: String { rawValue }
+
+		var value: NavigationState.Tab {
+			switch self {
+			case .messages: return .messages
+			case .nodes: return .nodes
+			case .map: return .map
+			case .settings: return .settings
+			case .connect: return .connect
+			}
+		}
+
+		@ViewBuilder
+		var label: some View {
+			switch self {
+			case .messages: Label("Messages", systemImage: "message")
+			case .nodes: Label("Nodes", image: "custom.mesh.radio")
+			case .map: Label("Map", systemImage: "map")
+			case .settings: Label("Settings", systemImage: "gear")
+			case .connect: Label("Connect", systemImage: "link")
+			}
+		}
+	}
+
+	@ViewBuilder
+	private func legacyContent(for tab: LegacyTab) -> some View {
+		switch tab {
+		case .messages:
+			Messages(
+				router: router,
+				unreadChannelMessages: $appState.unreadChannelMessages,
+				unreadDirectMessages: $appState.unreadDirectMessages
+			)
+			.trackScreen(tab.value.screenName)
+		case .nodes: NodeList().trackScreen(tab.value.screenName)
+		case .map: MeshMapMK(router: router).trackScreen(tab.value.screenName)
+		case .settings: Settings().trackScreen(tab.value.screenName)
+		case .connect: Connect(router: router).trackScreen(tab.value.screenName)
+		}
+	}
+
 }
 
 // MARK: - Reset Placeholder
@@ -294,5 +364,35 @@ struct DatabaseResettingPlaceholder: View {
 				.foregroundColor(.gray)
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity)
+	}
+}
+
+/// Defers a legacy-`TabView` tab's content until the tab is first selected, then
+/// keeps it alive so its state survives further tab switches.
+///
+/// The iOS 17 `TabView { A; B; C }` form constructs every tab's root immediately,
+/// which on this app means five view trees and their `@Query` subscriptions all
+/// come up during first layout. iOS 18's `Tab(value:) { }` takes a closure and is
+/// lazy already, so this exists only for the iOS 17 path.
+private struct LegacyTabContent<Content: View>: View {
+	let tab: AnyHashable
+	let isActive: Bool
+	@ViewBuilder let content: () -> Content
+	/// Latched on first activation — never reset, so a tab keeps its navigation
+	/// state once visited, matching the eager behaviour from the second visit on.
+	@State private var hasActivated = false
+
+	var body: some View {
+		Group {
+			if hasActivated {
+				content()
+			} else {
+				Color(.systemBackground)
+			}
+		}
+		.onAppear { if isActive { hasActivated = true } }
+		.onChange(of: isActive) { _, active in
+			if active { hasActivated = true }
+		}
 	}
 }

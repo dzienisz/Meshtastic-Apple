@@ -11,6 +11,7 @@ struct PendingContact: Identifiable {
 	let id = UUID()
 	let contact: SharedContact
 	let base64UrlString: String
+	let exchangeRequested: Bool
 }
 
 extension NSNotification.Name {
@@ -22,11 +23,36 @@ extension NSNotification.Name {
 	/// (NSNotification.Name, not Notification.Name — the app defines its own
 	/// `Notification` model type which shadows Foundation's in some files.)
 	static let meshMessagesDidChange = NSNotification.Name("MeshMessagesDidChange")
+
+	/// Posted when the radio reports something about a firmware update it was asked to start.
+	/// The firmware answers an OTA request with a client notification saying what it did —
+	/// rebooting into update mode, or why it would not: no OTA loader, a loader that does not
+	/// do this transport, a bad hash. The update sheet shows it instead of waiting to time out
+	/// on a device that was never coming. The message is the notification object.
+	static let otaDeviceNotice = NSNotification.Name("OTADeviceNotice")
+}
+
+/// A route with no main window of its own: a notification tap, or a button in the visionOS
+/// spatial map volume. The active main window takes it.
+struct PendingRoute: Equatable {
+	let id = UUID()
+	let url: URL
+	/// The window that takes it also comes to the front, for a route asked for from another window.
+	var bringForward = false
 }
 
 class AppState: ObservableObject {
 
-	@Published var router: Router
+	/// One router per open window. A store reset pops every registered router;
+	/// each window keeps its own tab. See `SceneRouters`.
+	let sceneRouters = SceneRouters()
+	/// Set by a notification response. Claimed by the active main window.
+	@Published var pendingRoute: PendingRoute?
+	/// How many main windows are showing. Scene configuration names are nil on visionOS, so the
+	/// scene list can't tell a main window from the spatial map volume.
+	@Published var mainWindowCount = 0
+	/// Initial tab for a debug performance seed, applied once by the first main window.
+	var launchNavigation: NavigationState?
 	@Published var unreadChannelMessages: Int
 	@Published var unreadDirectMessages: Int
 	/// Bumped after a node-switch restore to force @Query-backed views to rebuild and
@@ -49,18 +75,12 @@ class AppState: ObservableObject {
 	/// tree: identity churn mid-switch is what produced the UIKit/CoreAnimation dead-view
 	/// SIGTRAPs on device, so container delivery must never ride on it.
 	@Published var containerStamp = UUID()
-	/// A contact parsed from a meshtastic.org/v/# URL (QR code, link, or NFC tag)
-	/// awaiting user confirmation. Presented as a sheet from MeshtasticApp, the
-	/// same pattern the channel-link import uses.
-	@Published var pendingContactToAdd: PendingContact?
-
 	var totalUnreadMessages: Int {
 		unreadChannelMessages + unreadDirectMessages
 	}
 	private var cancellables: Set<AnyCancellable> = []
 
-	init(router: Router) {
-		self.router = router
+	init() {
 		self.unreadChannelMessages = 0
 		self.unreadDirectMessages = 0
 
@@ -96,5 +116,31 @@ class AppState: ObservableObject {
 			unreadDirectMessages = dmCount
 		}
 		Logger.data.debug("🔢 Badge refresh: \(channelCount) channel + \(dmCount) DM = \(channelCount + dmCount) total")
+	}
+
+	/// The first main window to appear takes the perf-seed tab. Later windows start on Connect.
+	func takeLaunchNavigation() -> NavigationState? {
+		defer { launchNavigation = nil }
+		return launchNavigation
+	}
+
+	/// Hands the pending route to one window. The caller must already
+	/// be the window that should navigate; a second caller sees nil.
+	func claimPendingRoute() -> PendingRoute? {
+		guard let pendingRoute else { return nil }
+		self.pendingRoute = nil
+		return pendingRoute
+	}
+
+	/// Whether the visionOS showcase immersive space is showing. Only one may be open at a time.
+	@Published var showcaseOpen = false
+
+	/// A node the spatial map volume should select once it is showing; claimed the same way.
+	@Published var spatialMapFocus: SpatialMapFocusRequest?
+
+	func claimSpatialMapFocus() -> Int64? {
+		guard let spatialMapFocus else { return nil }
+		self.spatialMapFocus = nil
+		return spatialMapFocus.nodeNum
 	}
 }

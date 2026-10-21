@@ -10,14 +10,14 @@ struct TextMessageField: View {
 	let destination: MessageDestination
 	@Binding var replyMessageId: Int64
 	@FocusState.Binding var isFocused: Bool
-	/// Called on the main actor after a message is successfully sent, so the
-	/// (poll-based) message list can reload immediately instead of waiting for
-	/// the next refresh tick.
+	/// Called on the main actor after the sent message is saved so the list can
+	/// reload immediately and show the new bubble.
 	var onMessageSent: (@MainActor () -> Void)?
 
 	@State private var typingMessage: String = ""
 	@State private var totalBytes = 0
 	@State private var sendPositionWithMessage = false
+	@State private var mentionQuery: String? = nil
 
 	var body: some View {
 		if #available(iOS 18.0, macOS 15.0, *) {
@@ -33,6 +33,14 @@ struct TextMessageField: View {
 			)
 		} else {
 			VStack(spacing: 0) {
+				if let query = mentionQuery {
+					MentionAutocomplete(query: query) { user in
+						withAnimation(.easeInOut(duration: 0.15)) {
+							typingMessage = MentionParser.insertMentionToken(into: typingMessage, user: user)
+							mentionQuery = nil
+						}
+					}
+				}
 				HStack(alignment: .top) {
 					if replyMessageId != 0 || isFocused {
 						Button {
@@ -51,6 +59,7 @@ struct TextMessageField: View {
 							}
 						}
 						TextField("Message", text: $typingMessage, axis: .vertical)
+							.autocorrectionDisabled(false)
 							.frame(minHeight: 36)
 							.padding(.horizontal, 16)
 							.padding(.vertical, 12)
@@ -66,6 +75,7 @@ struct TextMessageField: View {
 									typingMessage = String(typingMessage.dropLast())
 									totalBytes = typingMessage.utf8.count
 								}
+								mentionQuery = MentionParser.activeMentionQuery(in: value)
 							}
 							.keyboardType(.default)
 							.focused($isFocused)
@@ -150,6 +160,7 @@ struct TextMessageField: View {
 				typingMessage = ""
 				isFocused = false
 				replyMessageId = 0
+				await MainActor.run { onMessageSent?() }
 
 				if sendPositionWithMessage {
 					try await accessoryManager.sendPosition(
@@ -160,7 +171,6 @@ struct TextMessageField: View {
 					Logger.mesh.info("Location Sent")
 				}
 
-				await MainActor.run { onMessageSent?() }
 			} catch {
 				Logger.mesh.info("Error sending message")
 			}
@@ -184,10 +194,20 @@ private struct FormattingComposeArea: View {
 	@State private var textSelection: TextSelection?
 	@State private var showToolbar = false
 	@State private var showLinkSheet = false
+	@State private var mentionQuery: String? = nil
 
 	var body: some View {
 		VStack(spacing: 0) {
 			MessagePreview(text: typingMessage)
+			if let query = mentionQuery {
+				MentionAutocomplete(query: query) { user in
+					withAnimation(.easeInOut(duration: 0.15)) {
+						textSelection = nil
+						typingMessage = MentionParser.insertMentionToken(into: typingMessage, user: user)
+						mentionQuery = nil
+					}
+				}
+			}
 			HStack(alignment: .top) {
 				if replyMessageId != 0 || isFocused {
 					Button {
@@ -206,6 +226,8 @@ private struct FormattingComposeArea: View {
 					}
 				}
 				TextEditor(text: $typingMessage, selection: $textSelection)
+					// The conversation disables autocorrect for its search field, and this box inherits that.
+					.autocorrectionDisabled(false)
 					.frame(minHeight: 36, maxHeight: 200)
 					.padding(.horizontal, 16)
 					.padding(.vertical, 4)
@@ -232,6 +254,7 @@ private struct FormattingComposeArea: View {
 							totalBytes = typingMessage.utf8.count
 							textSelection = nil
 						}
+						mentionQuery = MentionParser.activeMentionQuery(in: value)
 					}
 					.keyboardType(.default)
 					.focused($isFocused)
@@ -292,16 +315,19 @@ private struct FormattingComposeArea: View {
 	// text/selection pair where the selection's UTF-16 range is out of bounds. (#1976)
 	private func send() {
 		textSelection = nil
+		mentionQuery = nil
 		onSend()
 	}
 
 	private func alert() {
 		textSelection = nil
+		mentionQuery = nil
 		onAlert()
 	}
 
 	private func requestPosition() {
 		textSelection = nil
+		mentionQuery = nil
 		onRequestPosition()
 	}
 

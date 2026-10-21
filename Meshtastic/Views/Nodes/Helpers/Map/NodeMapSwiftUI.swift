@@ -34,6 +34,8 @@ struct NodeMapSwiftUI: View {
 	private let visiblePositionLimit = 1_000
 
 	@Environment(\.modelContext) private var context
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
+	@Environment(\.displayScale) private var displayScale
 	@EnvironmentObject var accessoryManager: AccessoryManager
 	/// Parameters
 	@Bindable var node: NodeInfoEntity
@@ -64,7 +66,9 @@ struct NodeMapSwiftUI: View {
 	@State private var mapRegion = MKCoordinateRegion.init()
 
 	var body: some View {
-		if node.modelContext != nil {
+		// isDeleted too: a deleted-but-unsaved node keeps its modelContext until the save
+		// completes, and reading its persisted properties in that window traps.
+		if node.modelContext != nil && !node.isDeleted {
 			Group {
 				if totalPositionCount > 0 {
 					mapWithNavigation
@@ -109,6 +113,7 @@ struct NodeMapSwiftUI: View {
 			}
 			.sheet(isPresented: $isShowingLegend) {
 				MapLegend(isMeshMap: false)
+					.trackScreen(.mapLegend)
 					.presentationDetents([.medium, .large])
 					.presentationContentInteraction(.scrolls)
 					#if !targetEnvironment(macCatalyst)
@@ -145,7 +150,7 @@ struct NodeMapSwiftUI: View {
 	private var baseMap: some View {
 		NodeMapContentEquatableWrapper(signature: mapContentSignature) {
 			Map(position: $position, bounds: MapCameraBounds(minimumDistance: 0, maximumDistance: .infinity), scope: mapScope) {
-				NodeMapContent(node: node, positions: positions)
+				NodeMapContent(node: node, positions: positions, displayScale: displayScale)
 			}
 		}
 		.mapScope(mapScope)
@@ -170,7 +175,7 @@ struct NodeMapSwiftUI: View {
 		Group {
 			if scene != nil && isLookingAround {
 				LookAroundPreview(initialScene: scene)
-					.frame(height: UIDevice.current.userInterfaceIdiom == .phone ? 250 : 400)
+					.frame(height: horizontalSizeClass == .regular ? 400 : 250)
 					.clipShape(RoundedRectangle(cornerRadius: 12))
 					.padding(.horizontal, 20)
 			}
@@ -181,7 +186,7 @@ struct NodeMapSwiftUI: View {
 		Group {
 			if !isLookingAround && isShowingAltitude {
 				PositionAltitudeChart(node: node)
-					.frame(height: UIDevice.current.userInterfaceIdiom == .phone ? 250 : 400)
+					.frame(height: horizontalSizeClass == .regular ? 400 : 250)
 					.clipShape(RoundedRectangle(cornerRadius: 12))
 					.padding(.horizontal, 20)
 			}

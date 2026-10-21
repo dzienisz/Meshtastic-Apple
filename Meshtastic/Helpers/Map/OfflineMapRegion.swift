@@ -11,6 +11,21 @@
 import Foundation
 import MapKit
 
+/// Elevation data downloaded alongside a region: Mapterhorn terrain extracts of
+/// the same bounding box. Absent for regions downloaded before terrain support.
+struct OfflineMapTerrain: Codable, Hashable {
+	/// File name of the global (z0–12) terrain extract, e.g. `"<uuid>-terrain.pmtiles"`.
+	var fileName: String
+	/// File name of the optional high-resolution regional extract, e.g. `"<uuid>-terrain-hi.pmtiles"`.
+	var regionalFileName: String?
+	/// Combined size of the terrain archives on disk.
+	var byteCount: Int64
+	/// When the terrain extract finished; drives cache invalidation.
+	var downloadedAt: Date
+	/// Highest zoom level with terrain data: 12 when global-only, higher with a regional extract.
+	var maxZoom: Int
+}
+
 /// Metadata describing one downloaded offline map region. The geometry is stored
 /// as four doubles (Codable-friendly); `bounds`/`region` expose the map types.
 struct OfflineMapRegion: Identifiable, Codable, Hashable {
@@ -29,6 +44,25 @@ struct OfflineMapRegion: Identifiable, Codable, Hashable {
 	var updatedDate: Date
 	/// Protomaps daily build the tiles were extracted from, e.g. `"20260623"`.
 	var sourceBuild: String
+	/// False for terrain-only downloads: no basemap archive exists, only the
+	/// terrain extracts (drawn over Apple maps). Optional and additive — manifests
+	/// written before terrain-only support decode with `nil`, meaning true.
+	var includesBasemap: Bool?
+	/// Terrain elevation extracts for the same bounds, when downloaded.
+	/// Optional and additive: manifests written before terrain support decode with `nil`.
+	var terrain: OfflineMapTerrain?
+	/// Set when the app made and maintains this region itself (for example the spatial map's
+	/// terrain), nil for the user's own regions. A string, not an enum, so a value written by a
+	/// newer build still decodes here. Optional and additive: older manifests decode with `nil`.
+	var managedBy: String?
+
+	/// `managedBy` value for the terrain the visionOS spatial map keeps up to date.
+	static let spatialMapManager = "spatialMap"
+
+	var hasBasemap: Bool { includesBasemap ?? true }
+	/// True for regions the app downloads and replaces on its own. They never count toward the
+	/// region limit and never block the user's own downloads.
+	var isAppManaged: Bool { managedBy != nil }
 
 	init(
 		id: UUID = UUID(),
@@ -40,7 +74,10 @@ struct OfflineMapRegion: Identifiable, Codable, Hashable {
 		fileSize: Int64,
 		createdDate: Date = .now,
 		updatedDate: Date = .now,
-		sourceBuild: String
+		sourceBuild: String,
+		includesBasemap: Bool = true,
+		terrain: OfflineMapTerrain? = nil,
+		managedBy: String? = nil
 	) {
 		self.id = id
 		self.name = name
@@ -55,6 +92,9 @@ struct OfflineMapRegion: Identifiable, Codable, Hashable {
 		self.createdDate = createdDate
 		self.updatedDate = updatedDate
 		self.sourceBuild = sourceBuild
+		self.includesBasemap = includesBasemap
+		self.terrain = terrain
+		self.managedBy = managedBy
 	}
 
 	var bounds: GeoBounds {
@@ -76,6 +116,18 @@ struct OfflineMapRegion: Identifiable, Codable, Hashable {
 
 	var formattedSize: String {
 		ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file)
+	}
+
+	/// Combined basemap + terrain size on disk, for rows and the delete confirmation.
+	var totalByteCount: Int64 { fileSize + (terrain?.byteCount ?? 0) }
+
+	var formattedTotalSize: String {
+		ByteCountFormatter.string(fromByteCount: totalByteCount, countStyle: .file)
+	}
+
+	/// The terrain component's size for display, or nil when no terrain is downloaded.
+	var formattedTerrainSize: String? {
+		terrain.map { ByteCountFormatter.string(fromByteCount: $0.byteCount, countStyle: .file) }
 	}
 
 	/// Whether this archive's zoom range covers what the map actually needs, or leaves a gap the

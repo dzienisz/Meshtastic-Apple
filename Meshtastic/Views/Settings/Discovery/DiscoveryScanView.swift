@@ -11,10 +11,10 @@ import MeshtasticProtobufs
 import OSLog
 @preconcurrency import SwiftData
 import SwiftUI
-import TipKit
 
 struct DiscoveryScanView: View {
 	@Environment(\.modelContext) private var context
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	@EnvironmentObject var accessoryManager: AccessoryManager
 
 	@State private var selectedPresets: Set<ModemPresets> = []
@@ -69,10 +69,16 @@ struct DiscoveryScanView: View {
 		let descriptor = FetchDescriptor<DiscoveredBeaconEntity>()
 		guard let beacons = try? context.fetch(descriptor) else { return [] }
 		let available = Set(availablePresets)
-		return Set(beacons.compactMap { $0.offeredPreset }).intersection(available)
+		// A public offer that pinned a slot is listed under Beacon Channels with its slot instead,
+		// since a preset chip would scan the preset's own slot.
+		let presets = beacons.compactMap { beacon -> ModemPresets? in
+			let isCustom = beacon.hasOfferChannel && !beacon.offerChannelName.isEmpty
+			if !isCustom, beacon.offeredFrequencySlot != nil { return nil }
+			return beacon.offeredPreset
+		}
+		return Set(presets).intersection(available)
 	}
 
-	private let discoveryScanTip = DiscoveryScanTip()
 
 	var body: some View {
 		GeometryReader { proxy in
@@ -123,13 +129,14 @@ struct DiscoveryScanView: View {
 		}
 	}
 
-	/// iPad and Mac Catalyst show a non-scrolling, map-filling layout while scanning or when a scan
-	/// is complete; iPhone keeps the scrolling list so the controls aren't cramped on a small screen.
+	/// Regular width shows a non-scrolling, map-filling layout while scanning or when a scan
+	/// is complete. Compact width keeps the scrolling list so the controls aren't cramped.
+	/// Mac Catalyst keeps the filling layout at any window size.
 	private var usesFillMapLayout: Bool {
 		#if targetEnvironment(macCatalyst)
 		return true
 		#else
-		return UIDevice.current.userInterfaceIdiom == .pad
+		return horizontalSizeClass == .regular
 		#endif
 	}
 
@@ -138,10 +145,6 @@ struct DiscoveryScanView: View {
 	@ViewBuilder
 	private func scanList(proxy: GeometryProxy) -> some View {
 		List {
-			TipView(discoveryScanTip)
-				.listRowBackground(Color.clear)
-				.listRowInsets(EdgeInsets())
-
 			if let engine {
 				if engine.isScanning || engine.currentState == .complete || engine.currentState == .analysis {
 					scanProgressSection(engine)
@@ -270,6 +273,7 @@ struct DiscoveryScanView: View {
 				Label("Stop Scan", systemImage: "stop.fill")
 			}
 			.buttonStyle(.borderedProminent)
+			.tint(.accentFill)
 		} else if engine.currentState == .complete, let session = engine.session {
 			HStack(spacing: 8) {
 				NavigationLink {
@@ -293,11 +297,11 @@ struct DiscoveryScanView: View {
 
 	// MARK: - Discovery Map
 
-	/// The discovery map sized for the device. On iPad and Mac Catalyst it fills most of the screen's
-	/// available height (`availableHeight` comes from the `GeometryReader` wrapping the `List` —
+	/// The discovery map sized for the space available. Regular width and Mac Catalyst fill most of
+	/// the height (`availableHeight` comes from the `GeometryReader` wrapping the `List` —
 	/// `containerRelativeFrame` inside a List row resolves against the self-sizing cell, not the
 	/// window, so it collapses) so the map is the dominant element rather than a short fixed band;
-	/// the controls remain reachable by scrolling. iPhone keeps a compact fixed height so it doesn't
+	/// the controls remain reachable by scrolling. Compact width keeps a fixed height so it doesn't
 	/// crowd the controls on a small screen.
 	@ViewBuilder
 	private func discoveryMap(for session: DiscoverySessionEntity, engine: DiscoveryScanEngine, availableHeight: CGFloat) -> some View {
@@ -310,7 +314,7 @@ struct DiscoveryScanView: View {
 		#if targetEnvironment(macCatalyst)
 		map.frame(height: max(520, availableHeight * 0.8))
 		#else
-		if UIDevice.current.userInterfaceIdiom == .pad {
+		if horizontalSizeClass == .regular {
 			map.frame(height: max(450, availableHeight * 0.78))
 		} else {
 			map.frame(height: 300)
@@ -428,30 +432,65 @@ struct DiscoveryScanView: View {
 
 extension DiscoveryScanView {
 
-	/// A custom channel advertised by a beacon, shown as its own selectable row in the scan setup.
-	/// Deduped by name + preset; carries the PSK/region needed to tune the radio to that mesh.
+	/// A custom channel, or a public channel on a pinned slot, advertised by a beacon, shown as its
+	/// own selectable row in the scan setup. `name` is empty for the public channel. Deduped by
+	/// name + preset + pinned slot; carries what the scan needs to tune to that mesh.
 	struct BeaconChannel: Hashable, Identifiable {
 		let name: String
-		let psk: Data
 		let preset: ModemPresets
-		let regionRaw: Int
-		var id: String { "\(name)|\(preset.rawValue)" }
-		var scanTarget: ScanTarget {
-			ScanTarget(preset: preset, regionRaw: regionRaw > 0 ? regionRaw : nil, channelName: name, channelPSK: psk)
+		let scanTarget: ScanTarget
+		var id: String { "\(name)|\(preset.rawValue)|\(scanTarget.frequencySlot ?? 0)" }
+
+		static func == (lhs: BeaconChannel, rhs: BeaconChannel) -> Bool { lhs.id == rhs.id }
+		func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
+		init(name: String, preset: ModemPresets, scanTarget: ScanTarget) {
+			self.name = name
+			self.preset = preset
+			self.scanTarget = scanTarget
+		}
+
+		/// The row for a saved beacon's offer. Nil for a public offer without a pinned slot, which
+		/// the preset chips already cover, and for a slot the region doesn't have.
+		init?(
+			beacon: DiscoveredBeaconEntity,
+			radioRegion: Int,
+			regionPresets: [Config.LoRaConfig.RegionCode: RegionPresetInfo]
+		) {
+			let isCustom = beacon.hasOfferChannel && !beacon.offerChannelName.isEmpty
+			if !isCustom, beacon.offeredFrequencySlot == nil { return nil }
+			guard let target = ScanTarget.beacon(
+				offeredPreset: beacon.offeredPreset,
+				offerRegion: beacon.offerRegion,
+				channel: isCustom ? (beacon.offerChannelName, beacon.offerChannelPSK) : nil,
+				frequencySlot: beacon.offeredFrequencySlot,
+				radioRegion: radioRegion,
+				regionPresets: regionPresets
+			) else { return nil }
+			self.init(name: isCustom ? beacon.offerChannelName : "", preset: target.preset, scanTarget: target)
 		}
 	}
 
-	/// Distinct custom channels heard from beacons across past sessions, for the Beacon Channels
-	/// section. A beacon must advertise both a channel name and a modem preset to be tunable.
+	/// Distinct custom channels, and public channels on a pinned slot, heard from beacons across
+	/// past sessions, for the Beacon Channels section. A beacon with no preset runs on its region's
+	/// default. One that pinned a slot its region doesn't have is left out, since the scan can't
+	/// tune to it.
 	var beaconChannels: [BeaconChannel] {
 		let descriptor = FetchDescriptor<DiscoveredBeaconEntity>()
 		guard let beacons = try? context.fetch(descriptor) else { return [] }
+		// Offers for channels the radio already has are not invitations (design#140).
+		let joined = configuredChannelOfferKeys(context: context)
+		let radioRegion = connectedRegionCode?.rawValue ?? 0
 		var seen = Set<String>()
 		var channels: [BeaconChannel] = []
-		for beacon in beacons where beacon.hasOfferChannel && !beacon.offerChannelName.isEmpty {
-			guard let preset = beacon.offeredPreset else { continue }
-			let channel = BeaconChannel(name: beacon.offerChannelName, psk: beacon.offerChannelPSK,
-										preset: preset, regionRaw: beacon.offerRegion)
+		for beacon in beacons {
+			guard let channel = BeaconChannel(
+				beacon: beacon,
+				radioRegion: radioRegion,
+				regionPresets: accessoryManager.loRaRegionPresets
+			) else { continue }
+			if !channel.name.isEmpty,
+			   joined.contains("\(beacon.offerChannelName)|\(beacon.offerChannelPSK.base64EncodedString())") { continue }
 			if seen.insert(channel.id).inserted { channels.append(channel) }
 		}
 		return channels.sorted { $0.name < $1.name }
@@ -552,7 +591,7 @@ extension DiscoveryScanView {
 			.padding(.vertical, 4)
 			.listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
 		} header: {
-			sectionHeader("Modem Presets", systemImage: "antenna.radiowaves.left.and.right")
+			sectionHeader("Modem Presets".localized, systemImage: "antenna.radiowaves.left.and.right")
 		} footer: {
 			VStack(alignment: .leading, spacing: 4) {
 				if availablePresets.contains(where: { popular.contains($0) }) {
@@ -609,7 +648,7 @@ extension DiscoveryScanView {
 			.foregroundStyle(isSelected ? Color.white : Color.primary)
 			.background {
 				RoundedRectangle(cornerRadius: 12, style: .continuous)
-					.fill(isSelected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary))
+					.fill(isSelected ? AnyShapeStyle(Color.accentFill) : AnyShapeStyle(.quaternary))
 			}
 			.overlay {
 				RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -639,14 +678,24 @@ extension DiscoveryScanView {
 						}
 					} label: {
 						HStack {
-							Image(systemName: "lock.fill")
+							Image(systemName: channel.name.isEmpty ? "globe" : "lock.fill")
 								.font(.caption)
 								.foregroundStyle(.secondary)
 							VStack(alignment: .leading, spacing: 1) {
-								Text(channel.name)
-								Text(channel.preset.description)
-									.font(.caption)
-									.foregroundStyle(.secondary)
+								Text(channel.name.isEmpty ? channel.preset.description : channel.name)
+								Group {
+									if let slot = channel.scanTarget.frequencySlot {
+										if channel.name.isEmpty {
+											Text("Slot \(slot)")
+										} else {
+											Text("\(channel.preset.description) · Slot \(slot)")
+										}
+									} else {
+										Text(channel.preset.description)
+									}
+								}
+								.font(.caption)
+								.foregroundStyle(.secondary)
 							}
 							Image(systemName: "dot.radiowaves.left.and.right")
 								.foregroundStyle(.blue)
@@ -661,9 +710,9 @@ extension DiscoveryScanView {
 					.foregroundStyle(.primary)
 				}
 			} header: {
-				sectionHeader("Beacon Channels", systemImage: "dot.radiowaves.left.and.right")
+				sectionHeader("Beacon Channels".localized, systemImage: "dot.radiowaves.left.and.right")
 			} footer: {
-				Text("Private channels advertised by beacons. Selecting one tunes the scan to that mesh so its traffic can be decoded.")
+				Text("Channels and frequency slots advertised by beacons. Selecting one tunes the scan to that mesh so its traffic can be decoded.")
 			}
 		}
 	}

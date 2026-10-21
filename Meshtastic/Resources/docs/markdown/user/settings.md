@@ -12,6 +12,19 @@ The Settings tab lets you configure the app and your connected Meshtastic radio.
 
 General app preferences including map style, notification behavior, and theme. These affect only the app — not the radio.
 
+### Notifications
+
+Which alerts the app raises is set per type in the iOS Settings app, under **Settings → Meshtastic**, in the **Notifications** section. **Open Settings** in App Settings takes you straight there. Every toggle is on by default.
+
+| Setting | Description |
+|---------|-------------|
+| Channel Messages | Alerts for incoming channel messages. Direct messages always notify unless the sender is muted, and a message that @mentions you notifies even with this off. |
+| New Waypoints | Alerts when a node shares a new waypoint. |
+| New Nodes | Alerts when a node the app has not seen before joins the mesh. |
+| Low Battery | Alerts when the connected device's battery gets low. |
+
+Turning a toggle off suppresses only the alert — messages, reactions, waypoints, and nodes are still received and still appear in the app. Muting a channel or a sender in the app silences that conversation regardless of these settings.
+
 ### Data Management
 
 - **Erase All App Data** — clears the local database, translation cache, and all stored settings, then immediately reloads the bundled device hardware catalog. Use this as a last resort.
@@ -33,12 +46,15 @@ LoRa settings control how your radio communicates on the mesh:
 | Setting | Description |
 |---------|-------------|
 | Region | Your geographical region. **Must be set correctly** — using the wrong region is illegal and prevents communication with local nodes. The standard regions are always available; the amateur (ham) 2m / 70cm / 1.25m bands and the EU 866 / narrow bands require firmware **2.8.0 or later** and only appear when your connected radio supports them. |
-| Modem Preset | Speed/range trade-off. Most users should use Long Fast or Long Slow. On firmware 2.8+, the preset list is filtered to those that are legal for the selected region (see below). |
+| Modem Preset | Speed/range trade-off. Which preset to use depends on your region — on firmware 2.8+ the list is filtered to those legal there, and the recommended one differs by region (see below). |
 | Bandwidth | Available under **Advanced** when **Use Preset** is off. The protobuf default value of 0 is shown as its effective firmware value: 250 kHz in sub-GHz regions and 812.5 kHz in the 2.4 GHz region. Choices are filtered for the selected region and connected radio. If a stored nonzero bandwidth is unsupported, the app shows a warning and prevents saving until you select a supported value. |
 | Hop Limit | The number of times a message is repeated by other nodes. Higher values increase range but also mesh traffic. |
 | Frequency Slot | Fine-tune the exact frequency within your region. |
+| Frequency Override | Use a specific frequency in MHz instead of the calculated slot. The LoRa and Licensed Operator settings show the stored frequency without rounding it. |
 
-On firmware **2.8.0 or later**, the radio tells the app which modem presets are legal in each region. When you pick a region, the Presets list narrows to the compatible set, and if your current preset isn't allowed there the app switches you to that region's default. Setting the region to **US** on a newly flashed node defaults the preset to **Long Turbo**. Amateur (ham) bands such as the Tiny and Narrow presets are marked **licensed** — the app shows a warning, and you should enable **Licensed Operator** (and set your call sign) in **User** config before transmitting. On older firmware the full preset list is shown unchanged.
+On firmware **2.8.0 or later**, the radio tells the app which modem presets are legal in each region. When you pick a region, the Presets list narrows to the compatible set, and if your current preset isn't allowed there the app switches you to that region's default. Setting the region to **US** on a newly flashed node moves the stock **Long Fast** preset to **Long Turbo** — Long Fast's bandwidth is not US-compliant — while a deliberately chosen preset that is legal in the US is kept. Amateur (ham) bands such as the Tiny and Narrow presets are marked **licensed** — the app shows a warning, and you should enable **Licensed Operator** (and set your call sign) in **User** config before transmitting. On older firmware the full preset list is shown unchanged.
+
+Saving LoRa settings may reboot the radio and briefly disconnect it. If the radio reports a region from newer firmware that this app does not recognize, choose a supported region before saving.
 
 ### Channels
 
@@ -72,6 +88,19 @@ On hardened lockdown-firmware radios, this page also shows a **Lockdown** sectio
 
 Set your Long Name (display name) and Short Name (4-character/emoji identifier shown in the node circle).
 
+Both limits are counted in UTF-8 bytes rather than characters, because that is how the radio stores them. Most emoji are four bytes, so a single emoji fills the short name; some older symbols are smaller. Typing past the limit stops rather than cutting a character in half.
+
+How long a Long Name can be depends on the radio. Firmware 2.8 and later keeps
+24 bytes of it — those radios store every node they hear in a slimmer record to
+save memory, and truncate anything longer as it arrives. Older firmware keeps
+39. The hint under the field shows whichever applies to the radio you are
+connected to.
+
+A name you already have is left alone, even if it is longer than the radio you
+are now connected to would keep. Note that a 2.8 radio hearing an older one
+still stores only 24 bytes of its name, so a longer name is shortened by
+everyone else's radio even when your own keeps it.
+
 ### Bluetooth
 
 BLE radio settings including PIN mode and power saving. Changes apply on next radio restart.
@@ -103,11 +132,23 @@ Controls which direction the on-device compass points when the screen is at rest
 
 ### Network
 
-Wi-Fi SSID/password for TCP connection, NTP server, and Ethernet (supported hardware only).
+Wi-Fi SSID/password for TCP connection, NTP and syslog servers, UDP broadcast, and
+Ethernet. Each section appears only on hardware that has the radio it configures, so a
+board with neither Wi-Fi nor Ethernet shows nothing here.
+
+**Address Mode** chooses between DHCP and a static address. On DHCP the radio asks the
+network for its address and the static fields are not shown.
+
+Choosing **Static** reveals four address fields. Address, gateway and subnet are
+required: a static setup missing any of them leaves the node unreachable, so Save stays
+disabled until all three are complete and well formed. A malformed entry is shown in
+red. **DNS is optional** and may be left blank, which stores it as unset.
 
 ### Position
 
 GPS update interval, position precision, and smart position broadcasting. Enable **Broadcast Position** to share your location with the mesh.
+
+The GPS pin settings (the receive, transmit and enable GPIOs) are for boards where you wire up the GPS yourself. On a board whose maker builds the GPS in, they are hidden, here and in settings search.
 
 The **GPS Mode** selector (Enabled / Disabled / Not Present) is the single source of truth for the GPS state that the app writes to the radio. The older on/off `gpsEnabled` field it replaced is deprecated: the app no longer writes it, but still reads it from older firmware so existing devices keep working. No action is needed when upgrading — your GPS setting is preserved.
 
@@ -117,7 +158,13 @@ Battery saving profiles, sleep modes, and minimum wake time. Critical for solar-
 
 ## Module Configuration
 
-Optional feature modules. Only available when your connected node supports the module.
+Optional feature modules. A module's settings appear only when your connected node
+can actually use them, which means two things: the radio's firmware build did not
+leave the module out, and the firmware is new enough to have it at all. Where a
+module needs a particular firmware version, it is noted in the table below.
+
+A node that has not yet reported its firmware version is offered everything, so a
+screen may briefly appear before the radio finishes identifying itself.
 
 | Module | Description |
 |--------|-------------|
@@ -134,30 +181,23 @@ Optional feature modules. Only available when your connected node supports the m
 | Ringtone | Custom RTTTL melodies for notification tones. |
 | Store & Forward | Store packets for nodes that are temporarily offline. |
 | Serial | UART serial output for integration with other hardware. |
-| Status Message | Set a custom status message broadcast to the mesh. |
 | Telemetry | Device, environment, and air-quality sensor reporting. |
-| Traffic Management | Mesh traffic optimisation — position deduplication, rate limiting, and unknown-packet filtering. Requires firmware 2.8.0+. |
 
-### Traffic Management
+### Mesh Beacon
 
-The Traffic Management module helps reduce unnecessary mesh traffic and improve network efficiency. It is available on nodes running firmware **2.8.0 or later**. Each feature is enabled implicitly by a non-zero value — turning a section's toggle off (or the master **Enabled** switch) clears its values and disables that feature on the radio.
+A mesh beacon lets nearby radios find your mesh and join it. It is available on nodes running firmware **2.8.0 or later**, and needs a LoRa region set first. The beacon always uses the radio's own region, and offers the radio's own modem preset.
 
 | Setting | Description |
 |---------|-------------|
-| Enabled | Master enable for the traffic management module. |
-| **Position Deduplication** | |
-| Position Dedup | Drop redundant position broadcasts from the same node. |
-| Min Interval (s) | Minimum seconds between position updates from the same node. |
-| **NodeInfo Direct Response** | |
-| Direct Response | Respond to NodeInfo requests directly from local cache instead of flooding the mesh. |
-| Max Hops | Maximum hop distance from the requestor at which direct NodeInfo responses are served from the local cache. |
-| **Rate Limiting** | |
-| Rate Limiting | Enable per-node rate limiting to throttle chatty nodes. |
-| Window (s) | Time window in seconds for rate limiting calculations. |
-| Max Packets | Maximum packets allowed per node within the rate limit window. |
-| **Unknown Packet Handling** | |
-| Drop Unknown | Enable dropping of unknown/undecryptable packets. |
-| Threshold | Maximum unknown/undecryptable packets per rate window before the source is dropped. |
+| Listen for Beacons | Hear beacons from other meshes and show them in discovery. |
+| Broadcast a Beacon | Send a beacon from this radio. The settings below appear only while this is on. |
+| Message | Short text sent with each beacon, up to 60 bytes. |
+| Channel | The channel listeners are offered to join. It must be one of this radio's channels. |
+| Frequency Slot | The slot listeners should tune to for the offered channel. Leave it empty and they work it out from the region, preset and channel name, which is right for most meshes. Set it only if your mesh uses a different slot. |
+| Interval | How often the beacon is sent. The minimum is one hour. |
+| Broadcast On | Where the beacon is sent. Each target is a channel, a preset and an optional frequency slot, and gets its own copy of the beacon. A target whose channel is no longer on the radio is marked and must be changed before saving. |
+
+A frequency slot must be within the range for the region and preset; the screen shows the range when a value is outside it.
 
 ## Tools
 
@@ -213,7 +253,13 @@ All present sections are selected by default **except Security & Identity**, whi
 > **Warning — Import replaces settings**
 > Importing writes the selected settings — including any secrets in the file — onto the connected node. Only import files from a source you trust.
 
-Applying **Channels & LoRa** reboots the radio, so it briefly disconnects; the app reports this so you can reconnect. Settings are applied in order and the import stops at the first failure, telling you exactly what was and wasn't sent. Because the radio can silently discard settings it accepts, the result screen also offers **Verify Against the Radio**: once the radio reconnects and sends its configuration back, it compares each imported section against what the radio actually holds. Re-running an import is safe.
+Every non-empty import commits the selected settings and reboots the radio, so it briefly disconnects; the app reports this so you can reconnect. Settings are applied in order and the import stops at the first failure, telling you exactly what was and wasn't sent. Settings unsupported by the connected radio appear under **Not Supported by This Radio** instead of being sent.
+
+MQTT and Serial settings are applied after the main transaction because either can drop the Bluetooth link before the transaction is committed. If that disconnect interrupts them, the result shows **Needs a Second Pass** so you can reconnect and apply those sections separately. If the radio disconnects before acknowledging the commit, the result warns that saving was not confirmed.
+
+You can cancel while a setting is being sent over Bluetooth or TCP; cancellation typically completes quickly. The app stops sending additional sections, then commits the sections already applied so the radio does not remain in an unfinished edit transaction. If the transport callback does not settle, the sheet allows dismissal after 15 seconds. A write already handed to the operating system may still reach the radio, so review the result before retrying.
+
+Because the radio can silently discard settings it accepts, imports that reboot the radio show **Check What Applied** while the app waits for it to reconnect. Once the radio sends its configuration back, the app automatically compares each imported section against what the radio actually holds. If that check can't run, tap **Verify Against the Radio** to try again. Re-running an import is safe.
 
 ## Automatic Documentation Translation
 

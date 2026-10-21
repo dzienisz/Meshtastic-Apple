@@ -49,6 +49,24 @@ enum VerificationOutcome: Equatable {
 	case notComparable(reason: String)
 }
 
+/// Determines whether a post-import readback can be verified exactly once.
+///
+/// `refreshNotBefore` is recorded before the import begins. This lets a config refresh that arrives
+/// while the import is still sending count as a readback, without accepting the cache from before it.
+struct DeviceProfileVerificationReadiness: Equatable {
+	let expectsReconnect: Bool
+	let refreshNotBefore: Date?
+	let lastConfigRefresh: Date?
+	let hasVerification: Bool
+
+	var shouldVerify: Bool {
+		guard expectsReconnect, !hasVerification,
+			  let refreshNotBefore, let lastConfigRefresh
+		else { return false }
+		return lastConfigRefresh >= refreshNotBefore
+	}
+}
+
 struct DeviceProfileVerification: Equatable {
 	var outcomes: [(kind: ImportItemKind, outcome: VerificationOutcome)] = []
 	/// Set when verification could not run at all, with the reason.
@@ -96,7 +114,7 @@ enum DeviceProfileVerifier {
 		plan: DeviceProfileImportPlan,
 		before: [ImportItemKind: ImportPayload],
 		source: ProfileConfigSource,
-		importFinishedAt: Date
+		readbackNotBefore: Date
 	) -> DeviceProfileVerification {
 		var report = DeviceProfileVerification()
 
@@ -106,8 +124,8 @@ enum DeviceProfileVerifier {
 			report.unavailable = "The app has not received a configuration from the radio yet."
 			return report
 		}
-		guard refreshed >= importFinishedAt else {
-			report.unavailable = "The radio has not sent its configuration since the import finished."
+		guard refreshed >= readbackNotBefore else {
+			report.unavailable = "The radio has not sent its configuration since the import began."
 			return report
 		}
 
@@ -216,8 +234,6 @@ struct NodeProfileConfigSource: ProfileConfigSource {
 		case .detectionSensor: return node.detectionSensorConfig.map { .detectionSensor($0.protoConfig) }
 		case .paxcounter: return node.paxCounterConfig.map { .paxcounter($0.protoConfig) }
 		case .tak: return node.takConfig.map { .tak($0.protoConfig) }
-		case .trafficManagement:
-			return node.trafficManagementConfig.map { .trafficManagement($0.protoConfig) }
 		case .statusMessage: return node.statusMessageConfig.map { .statusMessage($0.protoConfig) }
 		// The radio never echoes these back in a comparable form.
 		case .ringtone, .cannedMessagesText, .channelURL, .fixedPosition: return nil
@@ -255,7 +271,6 @@ extension ImportPayload {
 		case .detectionSensor(let value): return value
 		case .paxcounter(let value): return value
 		case .tak(let value): return value
-		case .trafficManagement(let value): return value
 		case .statusMessage(let value): return value
 		case .loraConfig(let value): return value
 		case .fixedPosition(let value): return value

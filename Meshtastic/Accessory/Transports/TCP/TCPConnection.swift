@@ -36,6 +36,10 @@ actor TCPConnection: Connection {
 	private let nwPort: NWEndpoint.Port
 	
 	private var connectionStreamContinuation: AsyncStream<ConnectionEvent>.Continuation?
+
+	/// Keyed continuations let concurrent sends and their completion/cancellation races
+	/// resolve only the matching send.
+	private var sendContinuations = WriteContinuationStore()
 	
 	var isConnected: Bool {
 		connection?.state == .ready
@@ -48,6 +52,23 @@ actor TCPConnection: Connection {
 	
 	var host: NWEndpoint.Host {
 		return nwHost
+	}
+
+	/// IPv4 address of the peer this socket is already connected to.
+	///
+	/// This is the remote endpoint of `NWConnection.currentPath`, the address the
+	/// connection is using. It does not look the hostname up again. Nil when the
+	/// socket is down or the peer is not an IPv4 address.
+	func connectedIPv4Address() -> String? {
+		guard let endpoint = connection?.currentPath?.remoteEndpoint else { return nil }
+		return Self.ipv4Address(of: endpoint)
+	}
+
+	/// Dotted IPv4 address from an endpoint, or nil for a name, IPv6, or anything else.
+	static func ipv4Address(of endpoint: NWEndpoint) -> String? {
+		guard case .hostPort(let host, _) = endpoint else { return nil }
+		guard case .ipv4(let address) = host else { return nil }
+		return String(describing: address)
 	}
 
 	private func waitForMagicBytes() async throws -> Bool {
@@ -189,36 +210,52 @@ actor TCPConnection: Connection {
 		withUnsafeBytes(of: &len) { buffer.append(contentsOf: $0) }
 		buffer.append(serialized)
 
-		try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-			// `connection` is nil after disconnect(). Optional-chaining the send call there made the
-			// whole statement a no-op: the continuation was created but never handed to a completion
-			// handler and never resumed, so the caller suspended forever with no cancellation handler
-			// to free it. The two heartbeat connect steps are built with `timeout: nil`, so that
-			// parked the whole connect sequence with nothing to time it out.
-			//
-			// Known remaining gap: this only covers the no-socket case. A live-but-stalled
-			// `NWConnection` (`.waiting`/`.preparing`) still queues the send without completing, and
-			// this continuation has no `withTaskCancellationHandler` (unlike `receiveData` above), so
-			// that variant is still uncancellable.
-			guard let connection else {
-				cont.resume(throwing: AccessoryError.disconnected("Not connected"))
-				return
-			}
-			connection.send(content: buffer, completion: .contentProcessed { error in
-				if let error = error {
-					cont.resume(throwing: error)
-				} else {
-					cont.resume()
+		let sendID = UUID()
+		try await withTaskCancellationHandler {
+			try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+				// `connection` is nil after disconnect(). Optional-chaining the send call there made
+				// the whole statement a no-op: the continuation was created but never handed to a
+				// completion handler and never resumed, so the caller suspended forever. Fail fast.
+				guard let connection else {
+					cont.resume(throwing: AccessoryError.disconnected("Not connected"))
+					return
 				}
-			})
+				self.sendContinuations.insert(id: sendID, continuation: cont)
+				connection.send(content: buffer, completion: .contentProcessed { error in
+					Task { await self.completeSend(id: sendID, error: error) }
+				})
+			}
+		} onCancel: {
+			// Resume the continuation with CancellationError instead of killing the NWConnection.
+			// The connection must stay alive for the commit that follows a cancelled import.
+			Task { await self.cancelPendingSend(id: sendID) }
 		}
 	}
-	
+
+	/// Called by the NWConnection send completion handler for one specific send.
+	private func completeSend(id: UUID, error: Error?) {
+		guard let cont = sendContinuations.remove(id: id) else { return }
+		if let error {
+			cont.resume(throwing: error)
+		} else {
+			cont.resume()
+		}
+	}
+
+	/// Called from onCancel (via actor hop) for one specific send.
+	private func cancelPendingSend(id: UUID) {
+		guard let cont = sendContinuations.remove(id: id) else { return }
+		cont.resume(throwing: CancellationError())
+	}
+
 	func disconnect(withError error: Error? = nil, shouldReconnect: Bool) throws {
 		Logger.transport.debug("🌐 [TCP] Disconnecting from TCP connection")
 		readerTask?.cancel()
 		readerTask = nil
-		
+
+		// Drain any in-flight send continuation before tearing down the connection.
+		sendContinuations.drainAll(throwing: AccessoryError.disconnected("Disconnected"))
+
 		connection?.cancel()
 		connection = nil
 		

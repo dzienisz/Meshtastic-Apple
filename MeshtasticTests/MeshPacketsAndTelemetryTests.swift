@@ -107,6 +107,210 @@ struct MyInfoIngestionTests {
 	}
 }
 
+// MARK: - Store and forward replays
+
+/// A store-and-forward router replays a stored message with a fresh outer packet id and
+/// the message's own id in `StoreAndForward.original_id`. Deduping on the outer id
+/// therefore misses, and every replay lands as another bubble.
+@Suite("Store and forward replays", .serialized)
+@MainActor
+struct StoreAndForwardReplayTests {
+	private static let connectedNode: Int64 = 0x0AAA_0001
+	private static let sender: UInt32 = 0x0BBB_0002
+
+	private func freshMesh() throws -> (MeshPackets, ModelContainer) {
+		let container = try ModelContainer(
+			for: Schema(MeshtasticSchema.allModels),
+			configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+		)
+		return (MeshPackets(modelContainer: container), container)
+	}
+
+	private func liveText(id: UInt32, _ text: String) -> MeshPacket {
+		var packet = MeshPacket()
+		packet.id = id
+		packet.from = Self.sender
+		packet.to = Constants.maximumNodeNum
+		packet.channel = 0
+		packet.decoded.portnum = .textMessageApp
+		packet.decoded.payload = Data(text.utf8)
+		return packet
+	}
+
+	private func replay(outerId: UInt32, originalId: UInt32, _ text: String) throws -> MeshPacket {
+		var stored = StoreAndForward()
+		stored.rr = .routerTextBroadcast
+		stored.text = Data(text.utf8)
+		stored.originalID = originalId
+
+		var packet = MeshPacket()
+		packet.id = outerId
+		packet.from = Self.sender
+		packet.to = UInt32(truncatingIfNeeded: Self.connectedNode)
+		packet.channel = 0
+		packet.decoded.portnum = .storeForwardApp
+		packet.decoded.payload = try stored.serializedData()
+		return packet
+	}
+
+	private func ingest(_ mesh: MeshPackets, _ packet: MeshPacket, storeForward: Bool) async {
+		await mesh.textMessageAppPacket(
+			packet: packet,
+			wantRangeTestPackets: false,
+			connectedNode: Self.connectedNode,
+			storeForward: storeForward,
+			appState: nil)
+	}
+
+	private func messageCount(in container: ModelContainer) throws -> Int {
+		try ModelContext(container).fetchCount(FetchDescriptor<MessageEntity>())
+	}
+
+	@Test func replayOfAMessageAlreadyReceivedLiveDoesNotAddABubble() async throws {
+		let (mesh, container) = try freshMesh()
+		await ingest(mesh, liveText(id: 0x1001, "hello"), storeForward: false)
+		#expect(try messageCount(in: container) == 1)
+
+		await ingest(mesh, try replay(outerId: 0x2001, originalId: 0x1001, "hello"), storeForward: true)
+		await ingest(mesh, try replay(outerId: 0x2002, originalId: 0x1001, "hello"), storeForward: true)
+
+		#expect(try messageCount(in: container) == 1, "two replays of one live message are still one message")
+	}
+
+	@Test func repeatedReplaysOfUnseenHistoryDoNotAddABubble() async throws {
+		let (mesh, container) = try freshMesh()
+		// Nothing was delivered live, so the first replay is what stores the message.
+		await ingest(mesh, try replay(outerId: 0x2003, originalId: 0x1002, "history"), storeForward: true)
+		#expect(try messageCount(in: container) == 1)
+
+		await ingest(mesh, try replay(outerId: 0x2004, originalId: 0x1002, "history"), storeForward: true)
+
+		#expect(try messageCount(in: container) == 1, "a second replay of the same stored message is not a new one")
+	}
+
+	@Test func aReplayIsStoredUnderTheMessageItReplays() async throws {
+		let (mesh, container) = try freshMesh()
+		await ingest(mesh, try replay(outerId: 0x2005, originalId: 0x1003, "history"), storeForward: true)
+
+		let stored = try ModelContext(container).fetch(FetchDescriptor<MessageEntity>())
+		#expect(stored.map(\.messageId) == [0x1003], "the outer id belongs to the replay, not the message")
+	}
+
+	@Test func aRouterThatSendsNoOriginalIdKeepsTheOuterIdBehavior() async throws {
+		let (mesh, container) = try freshMesh()
+		// Older routers reuse the stored message's id as the outer id and leave
+		// `original_id` at zero, so the outer id is still the identity there.
+		await ingest(mesh, try replay(outerId: 0x1004, originalId: 0, "legacy"), storeForward: true)
+		await ingest(mesh, try replay(outerId: 0x1004, originalId: 0, "legacy"), storeForward: true)
+
+		let stored = try ModelContext(container).fetch(FetchDescriptor<MessageEntity>())
+		#expect(stored.map(\.messageId) == [0x1004])
+	}
+}
+
+// MARK: - Automatic channel refresh staging
+
+@Suite("Automatic channel refresh staging", .serialized)
+@MainActor
+struct AutomaticChannelRefreshStagingTests {
+	private func freshMesh() throws -> (MeshPackets, ModelContainer) {
+		let container = try ModelContainer(
+			for: Schema(MeshtasticSchema.allModels),
+			configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+		)
+		return (MeshPackets(modelContainer: container), container)
+	}
+
+	private func seedMyInfo(_ mesh: MeshPackets, nodeNum: UInt32) async {
+		var myInfo = MyNodeInfo()
+		myInfo.myNodeNum = nodeNum
+		_ = await mesh.myInfoPacket(myInfo: myInfo, peripheralId: "test-peripheral")
+	}
+
+	private func channel(index: Int32, name: String, role: Channel.Role = .secondary) -> Channel {
+		var channel = Channel()
+		channel.index = index
+		channel.role = role
+		channel.settings.name = name
+		channel.settings.psk = Data([UInt8(truncatingIfNeeded: index), 0xCA, 0xFE])
+		channel.settings.uplinkEnabled = true
+		channel.settings.downlinkEnabled = false
+		channel.settings.moduleSettings.positionPrecision = 11
+		channel.settings.moduleSettings.isMuted = true
+		return channel
+	}
+
+	private func persistedChannels(in container: ModelContainer, nodeNum: UInt32) throws -> [(index: Int32, name: String?, psk: Data?)] {
+		let persistedNodeNum = Int64(nodeNum)
+		let context = ModelContext(container)
+		let myInfo = try #require(context.fetch(
+			FetchDescriptor<MyInfoEntity>(predicate: #Predicate { $0.myNodeNum == persistedNodeNum })
+		).first)
+		return myInfo.channels
+			.sorted { $0.index < $1.index }
+			.map { ($0.index, $0.name, $0.psk) }
+	}
+
+	@Test func activeRefreshStagePreservesPersistedChannelsBeforeCompletion() async throws {
+		let (mesh, container) = try freshMesh()
+		let nodeNum: UInt32 = 0x0A0B_0C0D
+		await seedMyInfo(mesh, nodeNum: nodeNum)
+		await mesh.channelPacket(channel: channel(index: 0, name: "Existing", role: .primary), fromNum: Int64(nodeNum))
+
+		await mesh.beginChannelRefreshStage(for: Int64(nodeNum))
+		await mesh.channelPacket(channel: channel(index: 0, name: "Staged Replacement", role: .primary), fromNum: Int64(nodeNum))
+		await mesh.channelPacket(channel: channel(index: 1, name: "Staged Secondary"), fromNum: Int64(nodeNum))
+
+		let persisted = try persistedChannels(in: container, nodeNum: nodeNum)
+		#expect(persisted.map(\.index) == [0])
+		#expect(persisted.first?.name == "Existing")
+		await mesh.discardChannelRefreshStage(for: Int64(nodeNum))
+	}
+
+	@Test func committingRefreshStageReplacesPersistedChannelsAtomically() async throws {
+		let (mesh, container) = try freshMesh()
+		let nodeNum: UInt32 = 0x0102_0304
+		await seedMyInfo(mesh, nodeNum: nodeNum)
+		await mesh.channelPacket(channel: channel(index: 0, name: "Old Primary", role: .primary), fromNum: Int64(nodeNum))
+		await mesh.channelPacket(channel: channel(index: 2, name: "Old Secondary"), fromNum: Int64(nodeNum))
+
+		await mesh.beginChannelRefreshStage(for: Int64(nodeNum))
+		await mesh.channelPacket(channel: channel(index: 1, name: "New Secondary"), fromNum: Int64(nodeNum))
+		await mesh.channelPacket(channel: channel(index: 0, name: "New Primary", role: .primary), fromNum: Int64(nodeNum))
+		var disabled = Channel()
+		disabled.index = 2
+		disabled.role = .disabled
+		await mesh.channelPacket(channel: disabled, fromNum: Int64(nodeNum))
+		for index in Int32(3)...Int32(7) {
+			var disabled = Channel()
+			disabled.index = index
+			disabled.role = .disabled
+			await mesh.channelPacket(channel: disabled, fromNum: Int64(nodeNum))
+		}
+		await mesh.commitChannelRefreshStage(for: Int64(nodeNum))
+
+		let persisted = try persistedChannels(in: container, nodeNum: nodeNum)
+		#expect(persisted.map(\.index) == [0, 1])
+		#expect(persisted.map(\.name) == ["New Primary", "New Secondary"])
+		#expect(persisted.map(\.psk) == [Data([0, 0xCA, 0xFE]), Data([1, 0xCA, 0xFE])])
+	}
+
+	@Test func discardingRefreshStagePreservesPersistedChannels() async throws {
+		let (mesh, container) = try freshMesh()
+		let nodeNum: UInt32 = 0x0D15_CAFE
+		await seedMyInfo(mesh, nodeNum: nodeNum)
+		await mesh.channelPacket(channel: channel(index: 0, name: "Kept Primary", role: .primary), fromNum: Int64(nodeNum))
+
+		await mesh.beginChannelRefreshStage(for: Int64(nodeNum))
+		await mesh.channelPacket(channel: channel(index: 0, name: "Discarded Primary", role: .primary), fromNum: Int64(nodeNum))
+		await mesh.discardChannelRefreshStage(for: Int64(nodeNum))
+
+		let persisted = try persistedChannels(in: container, nodeNum: nodeNum)
+		#expect(persisted.map(\.index) == [0])
+		#expect(persisted.first?.name == "Kept Primary")
+	}
+}
+
 // MARK: - Local Message Notification Cleanup
 
 @Suite("Local message notification cleanup")
@@ -137,6 +341,48 @@ struct LocalStatsTelemetryExportTests {
 		let csv = telemetryToCsvFile(telemetry: [telemetry], metricsType: 4)
 
 		#expect(csv.split(separator: "\n").last?.split(separator: ",").first?.trimmingCharacters(in: .whitespaces) == "0")
+	}
+}
+
+@Suite("Local stats request transport")
+struct LocalStatsRequestTransportTests {
+
+	@Test func directlyAttachedNode_skipsTransportChoice() {
+		#expect(LocalStatsRequestTransport.shouldChooseMethod(from: 0x1234, to: 0x1234) == false)
+	}
+
+	@Test func remoteNode_requiresTransportChoice() {
+		#expect(LocalStatsRequestTransport.shouldChooseMethod(from: 0x1234, to: 0x5678) == true)
+	}
+
+	@Test func remoteAdmin_requiresDestinationPublicKey() {
+		#expect(LocalStatsRequestTransport.remoteAdminAvailable(for: nil) == false)
+		#expect(LocalStatsRequestTransport.remoteAdminAvailable(for: Data()) == false)
+		#expect(LocalStatsRequestTransport.remoteAdminAvailable(for: Data(repeating: 1, count: 32)) == true)
+	}
+
+	@Test func sharedChannel_doesNotEnablePKIOnThePacket() {
+		var packet = MeshPacket()
+
+		#expect(LocalStatsRequestTransport.configure(
+			&packet,
+			transport: .sharedChannel,
+			destinationPublicKey: nil
+		))
+		#expect(packet.pkiEncrypted == false)
+	}
+
+	@Test func remoteAdmin_enablesPKIWithTheDestinationKey() {
+		let publicKey = Data(repeating: 2, count: 32)
+		var packet = MeshPacket()
+
+		#expect(LocalStatsRequestTransport.configure(
+			&packet,
+			transport: .remoteAdmin,
+			destinationPublicKey: publicKey
+		))
+		#expect(packet.pkiEncrypted == true)
+		#expect(packet.publicKey == publicKey)
 	}
 }
 
@@ -651,23 +897,6 @@ struct NymeaCommanderErrorDescriptionExtendedTests {
 	}
 }
 
-// MARK: - URL.TimeoutError
-
-@Suite("URL TimeoutError extended")
-struct URLTimeoutErrorExtendedTests {
-
-	@Test func errorDescription_containsSeconds() {
-		let error = URL.TimeoutError.timedOut(30.0)
-		#expect(error.errorDescription?.contains("30.0") == true)
-		#expect(error.errorDescription?.contains("timed out") == true)
-	}
-
-	@Test func errorDescription_smallTimeout() {
-		let error = URL.TimeoutError.timedOut(0.5)
-		#expect(error.errorDescription?.contains("0.5") == true)
-	}
-}
-
 // MARK: - NymeaGetNetworksResponse
 
 @Suite("NymeaGetNetworksResponse decoding extended")
@@ -784,7 +1013,7 @@ struct TelemetryPacketIngestTests {
 		let environmentType: Int32 = 1
 		var descriptor = FetchDescriptor<TelemetryEntity>(
 			predicate: #Predicate<TelemetryEntity> {
-				$0.nodeTelemetry?.num == nodeNum && $0.metricsType == environmentType
+				$0.nodeNum == nodeNum && $0.metricsType == environmentType
 			},
 			sortBy: [SortDescriptor(\TelemetryEntity.time, order: .reverse)]
 		)
@@ -793,7 +1022,7 @@ struct TelemetryPacketIngestTests {
 	}
 
 	/// Fix #2: telemetry from a node with no `NodeInfoEntity` yet must create the node and link the
-	/// reading, instead of being saved as an orphan row (nodeTelemetry == nil) the UI can never query.
+	/// reading, instead of being saved as an orphan row the UI can never query.
 	@Test func environmentTelemetryFromUnknownNode_createsNodeAndLinksReading() async throws {
 		let nodeNum: UInt32 = 0x2004_AA01
 		let packet = try makeEnvironmentTelemetryPacket(
@@ -820,7 +1049,8 @@ struct TelemetryPacketIngestTests {
 		let latest = try fetchLatestEnvironmentTelemetry(forNode: num)
 		#expect(latest != nil)
 		#expect(latest?.temperature == 23.5)
-		#expect(latest?.nodeTelemetry?.num == num)
+		#expect(latest?.nodeNum == num)
+		#expect(latest?.nodeTelemetry == nil)
 	}
 
 	/// Fix #1: a remote node that reports `time == 0` (no RTC/GPS) must fall back to the packet
@@ -907,7 +1137,7 @@ struct TelemetryPacketIngestTests {
 		let airQualityType: Int32 = 3
 		var descriptor = FetchDescriptor<TelemetryEntity>(
 			predicate: #Predicate<TelemetryEntity> {
-				$0.nodeTelemetry?.num == nodeNum && $0.metricsType == airQualityType
+				$0.nodeNum == nodeNum && $0.metricsType == airQualityType
 			},
 			sortBy: [SortDescriptor(\TelemetryEntity.time, order: .reverse)]
 		)
@@ -942,7 +1172,7 @@ struct TelemetryPacketIngestTests {
 		#expect(latest?.pm10Environmental == nil)
 		#expect(latest?.pm25Environmental == nil)
 		#expect(latest?.pm100Environmental == nil)
-		#expect(latest?.nodeTelemetry?.num == Int64(nodeNum))
+		#expect(latest?.nodeNum == Int64(nodeNum))
 	}
 }
 
@@ -1041,6 +1271,119 @@ struct EntityCapEvictionTests {
 			.fetch(FetchDescriptor<NodeInfoEntity>()).map { $0.num }.sorted()
 		// Favorite (1, despite being oldest) + newest (4) survive; oldest non-favorites (2,3) evicted.
 		#expect(remaining == [1, 4])
+	}
+
+	@Test func nodeEviction_respectsAChunkLimit() async throws {
+		let (mesh, container) = try freshMesh()
+		let context = ModelContext(container)
+		let base = Date(timeIntervalSince1970: 1_700_000_000)
+		for num in 1...20 {
+			let node = NodeInfoEntity()
+			node.num = Int64(num)
+			node.id = Int64(num)
+			node.lastHeard = base.addingTimeInterval(TimeInterval(num))
+			node.favorite = false
+			context.insert(node)
+		}
+		try context.save()
+
+		func remaining() throws -> [Int64] {
+			try ModelContext(container).fetch(FetchDescriptor<NodeInfoEntity>()).map(\.num).sorted()
+		}
+
+		// 20 nodes, cap 5, so 15 are over. A limited pass takes only its chunk, and it must
+		// take the stalest four — a chunk that deleted any four would keep the count right
+		// while evicting the wrong nodes.
+		let firstPass = await mesh.evictNodesIfOverCap(5, limit: 4)
+		#expect(firstPass == 4)
+		await mesh.flushDebouncedSaves()
+		#expect(try remaining() == Array(5...20), "the four least-recently-heard, not any four")
+
+		// Unlimited finishes the rest in one pass, as the in-line save hook wants.
+		let rest = await mesh.evictNodesIfOverCap(5)
+		#expect(rest == 11)
+		await mesh.flushDebouncedSaves()
+		#expect(try remaining() == Array(16...20), "the five most-recently-heard survive")
+
+		// Nothing over cap reports nothing done, which is how the chunk loop terminates.
+		let none = await mesh.evictNodesIfOverCap(5, limit: 4)
+		#expect(none == 0)
+	}
+
+	/// 30 nodes against a cap of 5 in chunks of 10, so the pass really is over cap and
+	/// really does take several chunks. Against the production cap of 10,000 nothing would
+	/// be evicted and both tests below would pass with the expiry check deleted.
+	private func seedThirtyNodes(_ container: ModelContainer) throws {
+		let context = ModelContext(container)
+		let base = Date(timeIntervalSince1970: 1_700_000_000)
+		for num in 1...30 {
+			let node = NodeInfoEntity()
+			node.num = Int64(num)
+			node.id = Int64(num)
+			node.lastHeard = base.addingTimeInterval(TimeInterval(num))
+			node.favorite = false
+			context.insert(node)
+		}
+		try context.save()
+	}
+
+	@Test func backgroundEviction_evictsToCapWhenTimeAllows() async throws {
+		let (mesh, container) = try freshMesh()
+		try seedThirtyNodes(container)
+
+		let wasActive = MeshPackets.appIsActive
+		MeshPackets.appIsActive = false
+		MeshPackets.beginMaintenance()
+		defer { MeshPackets.appIsActive = wasActive }
+
+		await mesh.enforceEntityCapsAndSave(nodeCap: 5, waypointCap: 5, chunkSize: 10)
+		await mesh.flushDebouncedSaves()
+
+		let remaining = try ModelContext(container)
+			.fetch(FetchDescriptor<NodeInfoEntity>()).map(\.num).sorted()
+		#expect(remaining == Array(26...30), "chunks run to the cap, keeping the newest")
+	}
+
+	@Test func backgroundEviction_stopsWhenBackgroundTimeExpires() async throws {
+		let (mesh, container) = try freshMesh()
+		try seedThirtyNodes(container)
+
+		let wasActive = MeshPackets.appIsActive
+		MeshPackets.appIsActive = false
+		// Stand in for the expiration handler having already fired: the pass must not
+		// start, rather than running to completion and being killed for it. Same caps as
+		// the test above, which evicts 25 — so this fails if the check is removed.
+		let generation = MeshPackets.beginMaintenance()
+		MeshPackets.expireMaintenance(generation)
+		defer {
+			MeshPackets.beginMaintenance()
+			MeshPackets.appIsActive = wasActive
+		}
+
+		await mesh.enforceEntityCapsAndSave(nodeCap: 5, waypointCap: 5, chunkSize: 10)
+		await mesh.flushDebouncedSaves()
+
+		let count = try ModelContext(container).fetchCount(FetchDescriptor<NodeInfoEntity>())
+		#expect(count == 30, "expired background time stops the eviction")
+	}
+
+	@Test func aStaleMaintenancePassCannotExpireTheCurrentOne() {
+		// Background, foreground, background again: two passes in flight. The first one's
+		// handler firing late must not stop the second, and the second must still be able
+		// to expire itself.
+		let first = MeshPackets.beginMaintenance()
+		let second = MeshPackets.beginMaintenance()
+		#expect(second != first)
+
+		MeshPackets.expireMaintenance(first)
+		#expect(!MeshPackets.backgroundTimeExpired, "a stale pass expiring is ignored")
+
+		MeshPackets.expireMaintenance(second)
+		#expect(MeshPackets.backgroundTimeExpired)
+
+		// Starting the next pass supersedes it, with nothing to clear.
+		MeshPackets.beginMaintenance()
+		#expect(!MeshPackets.backgroundTimeExpired)
 	}
 
 	@Test func waypoints_evictOldestLastUpdated() async throws {

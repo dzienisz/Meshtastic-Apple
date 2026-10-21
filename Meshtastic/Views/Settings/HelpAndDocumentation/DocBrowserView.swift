@@ -2,13 +2,21 @@
 
 import SwiftUI
 import OSLog
-#if !targetEnvironment(macCatalyst)
+#if !targetEnvironment(macCatalyst) && !os(visionOS)
 import Translation
 #endif
 
 struct DocBrowserView: View {
 
-	@State private var searchText = ""
+	@State private var searchText: String
+
+	/// Opens with the browser already filtered. Settings search passes the query the
+	/// user typed, so a documentation result lands on the pages that matched rather
+	/// than at the top of the contents.
+	init(initialSearch: String = "") {
+		_searchText = State(initialValue: initialSearch)
+	}
+
 	/// Collapsible section state — User Guide expanded by default, Developer Guide collapsed.
 	@State private var expandedSections: Set<DocSection> = [.user]
 	@State private var translatedLabels: [String: String] = [:]
@@ -370,6 +378,7 @@ struct DocBrowserView: View {
 			} else {
 				Button("Download") { downloadingLanguage = languageCode }
 					.buttonStyle(.borderedProminent)
+					.tint(.accentFill)
 			}
 		}
 		.padding(.horizontal)
@@ -393,7 +402,7 @@ private struct LanguagePackDownloadModifier: ViewModifier {
 	let onDownloaded: () -> Void
 
 	func body(content: Content) -> some View {
-		#if !targetEnvironment(macCatalyst)
+		#if !targetEnvironment(macCatalyst) && !os(visionOS)
 		if #available(iOS 26, *) {
 			content.translationTask(
 				downloadingLanguage.map {

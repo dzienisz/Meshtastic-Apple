@@ -13,6 +13,7 @@ import MapKit
 import MVTTools
 import OSLog
 import SwiftUI
+import UIKit
 import Combine
 
 // MARK: - Native vector rendering of offline MVT tiles (drawn IN a SwiftUI Map)
@@ -21,12 +22,13 @@ import Combine
 // mvt-tools straight into native MapKit shapes (MapPolygon/MapPolyline). SwiftUI's `Map` can't host
 // raster tiles, but it renders vector `MapContent` natively — so the offline basemap composites
 // directly with the map's own annotations (nodes), with Apple Maps as the surrounding basemap.
-// No second map, no rasterization, no occlusion, no camera-swim.
+// This avoids a second map, rasterization, occlusion, and the two layers drifting apart during
+// camera moves.
 
 /// Semantic role for an offline vector feature, mapped to a color/width at render time so a single
 /// decode serves both light and dark appearance.
 enum OfflineFeatureRole {
-	case water, park, green, land
+	case water, park, green, land, river
 	case majorRoad, mediumRoad, minorRoad, path, rail, boundary
 }
 
@@ -34,6 +36,9 @@ struct OfflineMapPolygon: Identifiable {
 	let id: String
 	let role: OfflineFeatureRole
 	let coordinates: [CLLocationCoordinate2D]
+	/// Interior rings (holes) — islands in a lake, clearings in a park. Rendered
+	/// via MKPolygon(interiorPolygons:); dropping them floods islands solid.
+	var interiorRings: [[CLLocationCoordinate2D]] = []
 }
 
 struct OfflineMapPolyline: Identifiable {
@@ -230,7 +235,7 @@ final class OfflineVectorTileProvider: ObservableObject {
 	}
 
 	/// Painter's order for stitched road layers (earlier = underneath).
-	nonisolated private static let roadDrawOrder: [OfflineFeatureRole] = [.path, .minorRoad, .mediumRoad, .majorRoad, .rail, .boundary]
+	nonisolated private static let roadDrawOrder: [OfflineFeatureRole] = [.river, .path, .minorRoad, .mediumRoad, .majorRoad, .rail, .boundary]
 
 	/// Drop fills whose bounding box is smaller than this (meters) — invisible slivers/clutter.
 	nonisolated static let defaultMinFillMeters: Double = 40
@@ -239,12 +244,14 @@ final class OfflineVectorTileProvider: ObservableObject {
 
 	/// Decode + stitch the given tiles into render-ready shapes, with measurement stats. Shared by
 	/// `updateIfNeeded` and the test/benchmark entry point so they exercise the identical pipeline.
+	/// `shouldStop` is checked before each tile; once it returns true the rest are skipped.
 	nonisolated static func build(
 		source: OfflineTileSource,
 		bounds: GeoBounds,
 		tiles: [TileID],
 		minFillMeters: Double = defaultMinFillMeters,
-		minRoadMeters: Double = defaultMinRoadMeters
+		minRoadMeters: Double = defaultMinRoadMeters,
+		shouldStop: () -> Bool = { false }
 	) -> BuildResult {
 		let clock = ContinuousClock()
 		var polys: [OfflineMapPolygon] = []
@@ -253,6 +260,7 @@ final class OfflineVectorTileProvider: ObservableObject {
 		var rawVertexCount = 0
 		let decodeDuration = clock.measure {
 			for tile in tiles {
+				if shouldStop() { break }
 				autoreleasepool {
 					let decoded = decode(tile: tile, source: source, bounds: bounds)
 					for polygon in decoded.polys where boundingMeters(polygon.coordinates) >= minFillMeters {
@@ -459,11 +467,30 @@ extension OfflineVectorTileProvider {
 		"forest", "wood", "grass", "meadow", "nature_reserve", "playground"
 	]
 
-	nonisolated private static func decode(tile: TileID, source: OfflineTileSource, bounds: GeoBounds?) -> (polys: [OfflineMapPolygon], lines: [OfflineMapPolyline]) {
-		guard let data = source.tileData(z: UInt8(tile.z), x: UInt32(tile.x), y: UInt32(tile.y)),
-			  let vector = VectorTile(data: data, x: tile.x, y: tile.y, z: tile.z, projection: .epsg4326) else {
-			return ([], [])
+	nonisolated private static func parse(tile: TileID, source: OfflineTileSource) -> VectorTile? {
+		guard let data = source.tileData(z: UInt8(tile.z), x: UInt32(tile.x), y: UInt32(tile.y)) else { return nil }
+		return VectorTile(data: data, x: tile.x, y: tile.y, z: tile.z, projection: .epsg4326)
+	}
+
+	/// The water bodies in one tile, clipped to `bounds`. The spatial map paints these onto its
+	/// offline texture.
+	nonisolated static func waterPolygons(tile: TileID, source: OfflineTileSource, clippedTo bounds: GeoBounds?) -> [OfflineMapPolygon] {
+		guard let vector = parse(tile: tile, source: source) else { return [] }
+		var polys: [OfflineMapPolygon] = []
+		var counter = 0
+		appendWater(in: vector, bounds: bounds, into: &polys) { counter += 1; return "\(tile.key)/\(counter)" }
+		return polys
+	}
+
+	/// The water layer carries every polygonal water body (ocean, lake, dock, reef, basin…).
+	nonisolated private static func appendWater(in vector: VectorTile, bounds: GeoBounds?, into polys: inout [OfflineMapPolygon], id: () -> String) {
+		for feature in vector.features(for: "water") {
+			appendPolygons(feature.geometry, role: .water, bounds: bounds, into: &polys, id: id)
 		}
+	}
+
+	nonisolated private static func decode(tile: TileID, source: OfflineTileSource, bounds: GeoBounds?) -> (polys: [OfflineMapPolygon], lines: [OfflineMapPolyline]) {
+		guard let vector = parse(tile: tile, source: source) else { return ([], []) }
 		var polys: [OfflineMapPolygon] = []
 		var lines: [OfflineMapPolyline] = []
 		var counter = 0
@@ -475,8 +502,15 @@ extension OfflineVectorTileProvider {
 			guard let kind, parkKinds.contains(kind) else { continue } // parks only, skip generic land
 			appendPolygons(feature.geometry, role: .park, bounds: bounds, into: &polys, id: nextID)
 		}
+		appendWater(in: vector, bounds: bounds, into: &polys, id: nextID)
+		// The water layer also carries river/stream/canal CENTERLINES as LineStrings — in
+		// current basemap builds there is no separate physical_line layer, so
+		// waterway lines must come from here too or narrow rivers render as land.
 		for feature in vector.features(for: "water") {
-			appendPolygons(feature.geometry, role: .water, bounds: bounds, into: &polys, id: nextID)
+			let kind = (feature.properties["kind"] as? String) ?? (feature.properties["pmap:kind"] as? String)
+			if kind == "river" || kind == "stream" || kind == "canal" {
+				appendPolylines(feature.geometry, role: .river, bounds: bounds, into: &lines, id: nextID)
+			}
 		}
 		// All roads (incl. the residential/neighborhood street grid); footpaths are still skipped.
 		for feature in vector.features(for: "roads") {
@@ -511,19 +545,25 @@ extension OfflineVectorTileProvider {
 	nonisolated private static let simplifyEpsilon = 0.00008
 
 	nonisolated private static func appendPolygons(_ geometry: GISTools.GeoJsonGeometry, role: OfflineFeatureRole, bounds: GeoBounds?, into polys: inout [OfflineMapPolygon], id: () -> String) {
-		func add(_ ring: [GISTools.Coordinate3D]) {
+		func prepared(_ ring: [GISTools.Coordinate3D]) -> [CLLocationCoordinate2D]? {
 			var coords = ring.map(coord)
 			if let bounds { coords = clipPolygon(coords, to: bounds) }
 			coords = simplify(coords, epsilon: simplifyEpsilon)
-			guard coords.count >= 3 else { return }
-			polys.append(OfflineMapPolygon(id: id(), role: role, coordinates: coords))
+			return coords.count >= 3 ? coords : nil
+		}
+		func add(_ rings: [[GISTools.Coordinate3D]]) {
+			guard let outerRing = rings.first, let outer = prepared(outerRing) else { return }
+			// Interior rings are holes (islands in water, clearings in parks) —
+			// dropping them painted islands solid blue.
+			let interiors = rings.dropFirst().compactMap(prepared)
+			polys.append(OfflineMapPolygon(id: id(), role: role, coordinates: outer, interiorRings: interiors))
 		}
 		switch geometry {
 		case let polygon as GISTools.Polygon:
-			if let outer = polygon.rings.first?.coordinates { add(outer) }
+			add(polygon.rings.map(\.coordinates))
 		case let multi as GISTools.MultiPolygon:
 			for polygon in multi.polygons {
-				if let outer = polygon.rings.first?.coordinates { add(outer) }
+				add(polygon.rings.map(\.coordinates))
 			}
 		default:
 			break
@@ -698,5 +738,73 @@ extension OfflineVectorTileProvider {
 		let denominator = end.latitude - start.latitude
 		let t = denominator == 0 ? 0 : (lat - start.latitude) / denominator
 		return CLLocationCoordinate2D(latitude: lat, longitude: start.longitude + t * (end.longitude - start.longitude))
+	}
+}
+
+// MARK: - Offline basemap palette
+
+/// Colors and stroke widths for the decoded offline features, approximating Apple Maps
+/// Standard in light and dark. Shared so the iOS map and the tvOS map render identically.
+enum OfflineMapPalette {
+
+	static func earth(dark: Bool) -> UIColor {
+		dark ? UIColor(red: 0.137, green: 0.137, blue: 0.145, alpha: 1)
+			 : UIColor(red: 0.953, green: 0.945, blue: 0.929, alpha: 1)
+	}
+
+	static func fill(_ role: OfflineFeatureRole, dark: Bool) -> UIColor? {
+		switch role {
+		case .water: return dark ? UIColor(red: 0.094, green: 0.169, blue: 0.267, alpha: 1) : UIColor(red: 0.667, green: 0.831, blue: 0.953, alpha: 1)
+		case .park, .green: return dark ? UIColor(red: 0.122, green: 0.176, blue: 0.133, alpha: 1) : UIColor(red: 0.776, green: 0.882, blue: 0.706, alpha: 1)
+		case .land: return earth(dark: dark)
+		default: return nil
+		}
+	}
+
+	/// River/stream centerline stroke — the water fill color, fully opaque.
+	static func riverStroke(dark: Bool) -> UIColor {
+		fill(.water, dark: dark) ?? .systemBlue
+	}
+
+	/// Road fill: white centerline (light) or a lighter-than-land gray (dark).
+	static func roadFill(_ role: OfflineFeatureRole, dark: Bool) -> UIColor? {
+		switch role {
+		case .majorRoad: return dark ? UIColor(red: 0.46, green: 0.46, blue: 0.49, alpha: 1) : .white
+		case .mediumRoad: return dark ? UIColor(red: 0.38, green: 0.38, blue: 0.41, alpha: 1) : .white
+		case .minorRoad: return dark ? UIColor(red: 0.31, green: 0.31, blue: 0.34, alpha: 1) : .white
+		default: return nil
+		}
+	}
+
+	/// Road casing (light mode only): a warm-gray outline that makes the white roads read on pale land.
+	static func roadCasing(_ role: OfflineFeatureRole, dark: Bool) -> UIColor? {
+		guard !dark else { return nil }
+		switch role {
+		case .majorRoad, .mediumRoad, .minorRoad: return UIColor(red: 0.835, green: 0.824, blue: 0.800, alpha: 1)
+		default: return nil
+		}
+	}
+
+	static func roadWidth(_ role: OfflineFeatureRole) -> CGFloat {
+		switch role {
+		case .majorRoad: return 3.0
+		case .mediumRoad: return 2.2
+		case .minorRoad: return 1.3
+		default: return 1.0
+		}
+	}
+
+	/// Casing is ~1.4 pt wider than the fill (about 0.7 pt of outline each side).
+	static func roadCasingWidth(_ role: OfflineFeatureRole) -> CGFloat {
+		roadWidth(role) + 1.4
+	}
+
+	/// Rail / admin-boundary stroke color (single dashed line, both modes).
+	static func line(_ role: OfflineFeatureRole, dark: Bool) -> UIColor? {
+		switch role {
+		case .rail: return dark ? UIColor(red: 0.45, green: 0.46, blue: 0.49, alpha: 1) : UIColor(red: 0.62, green: 0.62, blue: 0.64, alpha: 1)
+		case .boundary: return dark ? UIColor(red: 0.50, green: 0.46, blue: 0.56, alpha: 1) : UIColor(red: 0.66, green: 0.62, blue: 0.70, alpha: 1)
+		default: return nil
+		}
 	}
 }

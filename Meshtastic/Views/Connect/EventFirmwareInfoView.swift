@@ -19,7 +19,9 @@ struct EventFirmwareInfoView: View {
 	@Environment(\.dismiss) private var dismiss
 	@AppStorage("useEventTheme") private var useEventTheme: Bool = true
 
-	private var accent: Color { info.accentColorValue ?? .accentColor }
+	/// The header fill. The fallback is the cobalt fill accent, because `headerForeground` puts white
+	/// text on it when the edition carries no color of its own.
+	private var accent: Color { info.accentColorValue ?? .accentFill }
 	private var displayName: String { info.displayName ?? edition.name }
 	private var highlight: Color {
 		info.accessibleTintHex(for: colorScheme)
@@ -77,6 +79,11 @@ struct EventFirmwareInfoView: View {
 				.background(Color(.systemGroupedBackground))
 			}
 			.tint(useEventTheme ? highlight : .accentColor)
+			// The accent-colored header extends behind the navigation bar, but the bar's
+			// title and close button follow the SYSTEM scheme — black over DEF CON's navy
+			// in light mode, well under the 4.5:1 text contrast minimum. Force the bar's
+			// content scheme to match the header foreground instead.
+			.toolbarColorScheme(headerForeground == .black ? .light : .dark, for: .navigationBar)
 			.navigationTitle(Text("Event"))
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
@@ -158,8 +165,22 @@ struct EventFirmwareInfoView: View {
 			if let dates = info.formattedDateRange {
 				detailRow(icon: "calendar", text: dates)
 			}
-			if let domain = info.domain, !domain.isEmpty {
-				detailRow(icon: "globe", text: domain)
+			// The event domain (e.g. the custom web flasher) is a destination, not
+			// metadata — render it like the rows in the Links section. Trimmed before
+			// interpolation: whitespace after the scheme would fail URL validation.
+			if let domain = info.domain?.trimmingCharacters(in: .whitespacesAndNewlines), !domain.isEmpty,
+			   let url = EventFirmwareURLPolicy.httpsURL(from: "https://\(domain)") {
+				Link(destination: url) {
+					HStack {
+						Label(domain, systemImage: "link")
+							.font(.callout)
+						Spacer()
+						Image(systemName: "arrow.up.right")
+							.font(.caption)
+							.foregroundColor(.secondary)
+					}
+					.frame(minHeight: 48)
+				}
 			}
 		}
 	}
@@ -180,11 +201,13 @@ struct EventFirmwareInfoView: View {
 				}
 				firmwareComparisonRow
 				if let notes = info.firmwareReleaseNotes, !notes.isEmpty {
-					DisclosureGroup("Release Notes") {
-						Text(notes)
-							.font(.footnote)
-							.foregroundColor(.secondary)
-							.padding(.vertical, 2)
+					// Same markdown rendering as the firmware updates screen, instead of the
+					// raw markdown source this used to dump as plain text.
+					NavigationLink("Release Notes") {
+						FirmwareReleaseNotesView(
+							markdown: notes,
+							versionId: info.firmwareVersion ?? displayName
+						)
 					}
 				}
 			} header: {

@@ -16,6 +16,7 @@ import os
 enum ReleaseType: String {
 	case stable = "Stable"
 	case alpha = "Alpha"
+	case nightly = "Nightly"
 	case unlisted = "Unlisted"
 }
 
@@ -40,6 +41,7 @@ private struct DeviceHardware: Codable {
 	let activelySupported: Bool
 	let displayName: String
 	let supportLevel: Int?
+	let isMaker: Bool?
 	let tags: [String]?
 	let images: [String]?
 	let requiresDfu: Bool?
@@ -70,6 +72,16 @@ struct FirmwareRelease: Codable {
 		case zipURL = "zip_url"
 		case releaseNotes = "release_notes"
 	}
+}
+
+/// Points at the current nightly build. Nightly artifacts sit at the root of the
+/// nightly host and are overwritten each build, so this file is the only way to
+/// learn which version is sitting there right now.
+struct NightlyFirmwareIndex: Codable {
+	let version: String
+	let id: String
+	let title: String
+	let commit: String?
 }
 
 private struct GitHubFirmwareRelease: Decodable {
@@ -169,20 +181,40 @@ class MeshtasticAPI: ObservableObject, @unchecked Sendable {
 	// MARK: - Constants
 	static let deviceURLEndpoint = URL(string: "https://api.meshtastic.org/resource/deviceHardware")!
 	static let imageURLPrefix = URL(string: "https://flasher.meshtastic.org/img/devices/")!
+
+	/// A device's `images` also lists its 3D model files (.usdz, .glb), which the flasher serves
+	/// from /models/devices/, not /img/devices/. Only these extensions are fetched as images.
+	static let imageFileExtensions: Set<String> = ["svg", "png", "jpg", "jpeg", "webp"]
+
+	static func isImageFile(_ name: String) -> Bool {
+		imageFileExtensions.contains((name as NSString).pathExtension.lowercased())
+	}
 	static let firmwareURLEndpoint = URL(string: "https://api.meshtastic.org/github/firmware/list")!
 	static let firmwareGitHubURLEndpoint = URL(string: "https://api.github.com/repos/meshtastic/firmware/releases?per_page=100")!
+	static let nightlyIndexEndpoint = URL(string: "https://nightly.meshtastic.org/index.json")!
+
+	/// Bump the suffix when the catalog gains a field the app stores. An unchanged ETag skips the
+	/// upsert, so without a new key an existing install never writes the new field (v2: isMaker).
+	static let deviceCatalogETagKey = "deviceCatalog.v2"
+	static let firmwareListETagKey = "firmwareReleaseList"
+
+	static let nightlyReleaseNotesEndpoint = URL(string: "https://nightly.meshtastic.org/release_notes.md")!
 	static let eventFirmwareURLEndpoint = URL(string: "https://api.meshtastic.org/resource/eventFirmware")!
+	static let maintenanceUf2URLEndpoint = URL(string: "https://api.meshtastic.org/resource/maintenanceUf2")!
 
 	/// How long a completed device image + msh.to link pass stays fresh before another network pass
-	/// is allowed. `processImage` issues a remote ETag HEAD per image (~78) up front, so running the
-	/// pass on every reconnect is wasteful when nothing changed. `clearDatabase` invalidates the
-	/// throttle (see `DeviceImageLinkThrottle`), so restore-after-clear ignores this window.
+	/// is allowed. `processImage` revalidates every image, so running the pass on every reconnect is
+	/// wasteful when nothing changed. `clearDatabase` invalidates the throttle (see
+	/// `DeviceImageLinkThrottle`), so restore-after-clear ignores this window.
 	static let staleDeviceImageLinkInterval: TimeInterval = 48 * 60 * 60
 
 	// MARK: - Private properties
+	private static let defaultURLSession = URLSession(configuration: .meshtasticAPI)
+
 	private let fileManager = FileManager.default
 	private let decoder = JSONDecoder()
 	private let container: ModelContainer?
+	private let urlSession: URLSession
 	
 	@Published var isLoadingDeviceList: Bool = false
 	@Published var isLoadingFirmwareList: Bool = false
@@ -210,8 +242,9 @@ class MeshtasticAPI: ObservableObject, @unchecked Sendable {
 	// assert the bundled seed stays network-free. `shared` remains the only app-side entry.
 	// `startupRefresh: false` suppresses the launch refresh cascade below so a test can call a
 	// single refresh function in isolation without the detached startup work racing it.
-	init(container: ModelContainer?, startupRefresh: Bool = true) {
+	init(container: ModelContainer?, startupRefresh: Bool = true, urlSession: URLSession? = nil) {
 		self.container = container
+		self.urlSession = urlSession ?? Self.defaultURLSession
 		guard container != nil, startupRefresh else { return }
 		Task.detached {
 			// Load bundled catalog first — instant display, no network needed.
@@ -225,6 +258,9 @@ class MeshtasticAPI: ObservableObject, @unchecked Sendable {
 			}
 			Task.detached(priority: .utility) {
 				await self.refreshEventFirmwareAPIData()
+			}
+			Task.detached(priority: .utility) {
+				await self.refreshMaintenanceUf2APIData()
 			}
 		}
 	}
@@ -243,16 +279,40 @@ class MeshtasticAPI: ObservableObject, @unchecked Sendable {
 		}
 
 		let decodedFirmware: FirmwareReleases
+		var firmwareListETag: String?
 		do {
-			let apiData = try await Self.firmwareURLEndpoint.data(timeout: 5.0)
+			let (apiData, eTag) = try await urlSession.dataWithETag(from: Self.firmwareURLEndpoint)
+			// Same short-circuit as the catalog: an unchanged list is not worth re-writing.
+			if let eTag, eTag == Self.lastETag(for: Self.firmwareListETagKey) {
+				let hasReleases = await MainActor.run {
+					((try? container.mainContext.fetchCount(FetchDescriptor<FirmwareReleaseEntity>())) ?? 0) > 0
+				}
+				if hasReleases {
+					Logger.services.debug("Firmware list unchanged (ETag match), skipping the upsert")
+					// The nightly comes from its own host and changes daily, so an unchanged
+					// release list says nothing about it. Same rule as the full path: only a
+					// successful read may replace the stored nightly.
+					if let nightlyRelease = await fetchNightlyRelease() {
+						await MainActor.run {
+							let context = container.mainContext
+							self.applyNightlyRelease(nightlyRelease, context: context)
+							try? context.save()
+						}
+					}
+					UserDefaults.lastFirmwareAPIUpdate = Date()
+					return
+				}
+			}
+			firmwareListETag = eTag
 			decodedFirmware = try FirmwareReleaseCatalog.decode(apiData)
 		} catch {
 			Logger.services.warning("Firmware API request failed; falling back to GitHub releases: \(error.localizedDescription, privacy: .public)")
-			let githubData = try await Self.firmwareGitHubURLEndpoint.data(timeout: 5.0)
+			let (githubData, _) = try await urlSession.data(from: Self.firmwareGitHubURLEndpoint)
 			decodedFirmware = try FirmwareReleaseCatalog.decode(githubData)
 		}
 		let stableVersions = Set(decodedFirmware.releases.stable.map { $0.id })
 		let alphaVersions = Set(decodedFirmware.releases.alpha.map { $0.id })
+		let nightlyRelease = await fetchNightlyRelease()
 
 		// All DB work on mainContext so @Query observers see changes
 		await MainActor.run {
@@ -264,6 +324,13 @@ class MeshtasticAPI: ObservableObject, @unchecked Sendable {
 
 			for alphaRelease in decodedFirmware.releases.alpha {
 				self.processFirmware(release: alphaRelease, releaseType: .alpha, context: context)
+			}
+
+			// Only on a successful read: applying the nightly deletes the rows for every other
+			// nightly version, so a failed fetch has to leave the stored one alone rather than
+			// empty the tab.
+			if let nightlyRelease {
+				self.applyNightlyRelease(nightlyRelease, context: context)
 			}
 
 			// Anything that's left in stableVersions and alphaVersions is no longer present in the API and should be deleted.
@@ -289,16 +356,38 @@ class MeshtasticAPI: ObservableObject, @unchecked Sendable {
 		
 		// Save the last update date for the firmware
 		UserDefaults.lastFirmwareAPIUpdate = Date()
+		Self.setLastETag(firmwareListETag, for: Self.firmwareListETagKey)
 	}
 
-	func refreshDevicesAPIData() async throws {
+	/// Refresh the hardware catalog from the API.
+	///
+	/// `includeImages` runs the image/link pass afterwards. Callers that only need the
+	/// metadata — a new board's name and PlatformIO target — pass false and skip it.
+	func refreshDevicesAPIData(includeImages: Bool = true) async throws {
 		guard let container else { return }
 		// No spinner bookkeeping here: this function raises no loading flag of its own, and the
 		// image/link pass it delegates to in PHASE 3 manages the flag around its own lifetime.
 		// Clearing it here would lower a flag a concurrent seed still needs raised.
 		// PHASE 1: Network only — no bundle fallback (bundle was already loaded at init).
-		let finalData = try await Self.deviceURLEndpoint.data(timeout: 10.0)
+		let (finalData, eTag) = try await urlSession.dataWithETag(from: Self.deviceURLEndpoint)
 		guard !finalData.isEmpty else { throw MeshtasticAPIError.unableToRetreviveJSON }
+
+		// An unchanged metadata payload can skip the upsert when device rows still exist. When images
+		// are requested, decode the cached payload for its image work list and run that pass below.
+		// A database clear leaves the stored ETag behind, so an empty catalog must still be rebuilt.
+		if let eTag, eTag == Self.lastETag(for: Self.deviceCatalogETagKey) {
+			let hasRows = await MainActor.run {
+				let context = container.mainContext
+				return ((try? context.fetchCount(FetchDescriptor<DeviceHardwareEntity>())) ?? 0) > 0
+			}
+			if hasRows {
+				Logger.services.debug("Device catalog unchanged (ETag match), skipping the upsert")
+				guard includeImages else { return }
+				let decodedDevices = try decoder.decode([DeviceHardware].self, from: finalData)
+				await refreshDeviceImagesAndLinks(apiDevices: decodedDevices)
+				return
+			}
+		}
 		// Decode Swift Structs (Safe to do off the DB thread)
 		let decodedDevices = try decoder.decode([DeviceHardware].self, from: finalData)
 
@@ -331,6 +420,7 @@ deviceEntity.architecture = device.architecture
 				deviceEntity.activelySupported = device.activelySupported
 				deviceEntity.displayName = device.displayName
 				deviceEntity.supportLevel = device.supportLevel ?? 0
+				deviceEntity.isMaker = device.isMaker ?? false
 				deviceEntity.requiresDfu = device.requiresDfu ?? false
 				deviceEntity.hasInkHud = device.hasInkHud ?? false
 				deviceEntity.partitionScheme = device.partitionScheme
@@ -360,6 +450,9 @@ deviceEntity.architecture = device.architecture
 		// PHASE 3: Images and msh.to links. This is the single image/link pass, driven by the
 		// live device list so hardware present only in the API still gets its images. It runs
 		// here, after the metadata upsert, so the device rows the images attach to already exist.
+		Self.setLastETag(eTag, for: Self.deviceCatalogETagKey)
+
+		guard includeImages else { return }
 		await refreshDeviceImagesAndLinks(apiDevices: decodedDevices)
 	}
 
@@ -372,8 +465,10 @@ deviceEntity.architecture = device.architecture
 			Logger.services.warning("Unable to load msh.to urls (API and bundled fallback both failed)")
 			return
 		}
+		guard !Task.isCancelled else { return }
 
 		await MainActor.run {
+			guard !Task.isCancelled else { return }
 			let context = container.mainContext
 			var importedCount = 0
 			let importedShortCodes = Set(decoded.routes.map { $0.shortCode })
@@ -443,9 +538,8 @@ deviceEntity.architecture = device.architecture
 	private func loadMshToUrls() async -> MshToUrlsFile? {
 		if let url = URL(string: "https://msh.to/api/urls") {
 			var request = URLRequest(url: url)
-			request.timeoutInterval = 15
 			request.cachePolicy = .reloadRevalidatingCacheData
-			if let (data, response) = try? await URLSession.shared.data(for: request),
+			if let (data, response) = try? await urlSession.data(for: request),
 			   let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
 			   let decoded = try? JSONDecoder().decode(MshToUrlsFile.self, from: data) {
 				Logger.services.info("Loaded msh.to urls from API (\(decoded.routes.count, privacy: .public) routes)")
@@ -453,6 +547,7 @@ deviceEntity.architecture = device.architecture
 			}
 			Logger.services.warning("msh.to API fetch failed; falling back to bundled urls.json")
 		}
+		guard !Task.isCancelled else { return nil }
 
 		guard let bundledURL = Bundle.main.url(forResource: "urls", withExtension: "json"),
 			  let data = try? Data(contentsOf: bundledURL),
@@ -463,6 +558,58 @@ deviceEntity.architecture = device.architecture
 		return decoded
 	}
 	
+	/// Store the current nightly and drop yesterday's row: only one nightly exists at a
+	/// time, because the host overwrites it with each build.
+	@MainActor
+	private func applyNightlyRelease(_ nightlyRelease: FirmwareRelease, context: ModelContext) {
+		processFirmware(release: nightlyRelease, releaseType: .nightly, context: context)
+
+		let nightlyRaw = ReleaseType.nightly.rawValue
+		let currentNightly = [nightlyRelease.id]
+		let staleNightlyDescriptor = FetchDescriptor<FirmwareReleaseEntity>(
+			predicate: #Predicate {
+				$0.releaseType == nightlyRaw && !currentNightly.contains($0.versionId)
+			}
+		)
+		if let staleNightlies = try? context.fetch(staleNightlyDescriptor) {
+			for staleNightly in staleNightlies {
+				context.delete(staleNightly)
+			}
+		}
+	}
+
+	/// Read the nightly pointer file. Best effort on purpose: no nightly, or an
+	/// unreachable one, must not fail the stable and alpha list refresh.
+	private func fetchNightlyRelease() async -> FirmwareRelease? {
+		do {
+			// Both files are served with a four hour max-age, so the default policy would answer
+			// a refresh out of the cache and hide a nightly that had already been published.
+			// Revalidate instead: a 304 costs nothing and the build is only cut once a day.
+			var indexRequest = URLRequest(url: Self.nightlyIndexEndpoint)
+			indexRequest.cachePolicy = .reloadRevalidatingCacheData
+			let (data, _) = try await urlSession.data(for: indexRequest)
+			let index = try JSONDecoder().decode(NightlyFirmwareIndex.self, from: data)
+			// The notes are revalidated with the index so a fresh version never shows the
+			// previous build's notes.
+			var notesRequest = URLRequest(url: Self.nightlyReleaseNotesEndpoint)
+			notesRequest.cachePolicy = .reloadRevalidatingCacheData
+			let notesResponse = try? await urlSession.data(for: notesRequest)
+			let notes = notesResponse?.0
+			let pageURL = index.commit.map { "https://github.com/meshtastic/firmware/commit/\($0)" }
+				?? "https://github.com/meshtastic/firmware/commits/master"
+			return FirmwareRelease(
+				id: index.id,
+				title: index.title,
+				pageURL: pageURL,
+				zipURL: "",
+				releaseNotes: notes.flatMap { String(data: $0, encoding: .utf8) }
+			)
+		} catch {
+			Logger.services.warning("Nightly firmware index unavailable: \(error.localizedDescription, privacy: .public)")
+			return nil
+		}
+	}
+
 	private func processFirmware(release: FirmwareRelease, releaseType: ReleaseType, context: ModelContext) {
 		let releaseId = release.id
 		var descriptor = FetchDescriptor<FirmwareReleaseEntity>(
@@ -494,57 +641,57 @@ deviceEntity.architecture = device.architecture
 		Logger.services.info("Saving firmware release \(release.id, privacy: .public) in database.")
 	}
 	
-	/// Handles the logic of checking ETag -> Checking DB -> Downloading -> Bundle Fallback -> Saving
-	private func processImage(imageName: String, platform: String ) async {
+	/// Fetches one cache-aware response, checks the database, then falls back to the bundle if needed.
+	private func processImage(imageName: String, platforms: [String]) async {
 		guard let container else { return }
 		// Skip if the pass was cancelled (connection teardown) — don't even do the bundle fallback.
 		if Task.isCancelled { return }
 		let url = Self.imageURLPrefix.appendingPathComponent(imageName)
 
-		// 1. Network: Try to get ETag (Optional - might fail if offline or timeout)
-		let remoteETag = try? await url.eTag()
+		// Revalidate once per scheduled pass. URLSession supplies cached data after a 304 response.
+		var request = URLRequest(url: url)
+		request.cachePolicy = .reloadRevalidatingCacheData
+		let fetchedResult = try? await urlSession.dataWithETag(for: request)
+		guard !Task.isCancelled else { return }
+		let networkResult = fetchedResult.flatMap { $0.data.isEmpty ? nil : $0 }
 
-		// 2. DB: Check if we already have this version or a usable cached version
+		// Check if every device already has this version or a usable offline copy.
+		// The image's device relationship is to-one, so shared art is stored once per
+		// device — every device that references the file needs its own current copy.
 		let isUpToDate: Bool = await MainActor.run {
 			let context = container.mainContext
-			var imageDescriptor = FetchDescriptor<DeviceHardwareImageEntity>(
-				predicate: #Predicate { $0.fileName == imageName }
-			)
-			imageDescriptor.fetchLimit = 1
-
-			if let existing = try? context.fetch(imageDescriptor).first,
-			   let data = existing.svgData, !data.isEmpty {
-				if let rTag = remoteETag {
-					return existing.eTag == rTag
+			for platform in platforms {
+				var deviceDescriptor = FetchDescriptor<DeviceHardwareEntity>(
+					predicate: #Predicate { $0.platformioTarget == platform }
+				)
+				deviceDescriptor.fetchLimit = 1
+				guard let deviceEntity = try? context.fetch(deviceDescriptor).first else { continue }
+				guard let existing = deviceEntity.images.first(where: { $0.fileName == imageName }),
+					  let data = existing.svgData, !data.isEmpty else { return false }
+				if let remoteETag = networkResult?.eTag {
+					if existing.eTag != remoteETag { return false }
+				} else if let remoteData = networkResult?.data, data != remoteData {
+					return false
 				}
-				return true
 			}
-			return false
+			return true
 		}
 
-		if isUpToDate {
-			Logger.services.debug("Image \(imageName) is up to date (or cached offline).")
-			return
-		}
+		guard !Task.isCancelled else { return }
+		guard !isUpToDate else { return }
 
-		// 3. Acquire Data (Network Primary -> Bundle Secondary)
-		var dataToSave: Data?
-		var eTagToSave: String?
+		// Use the network response directly. URLSession may have supplied its body from URLCache.
+		var dataToSave = networkResult?.data
+		var eTagToSave = networkResult?.eTag
 
-		// A: Attempt Network Download (only if we successfully got an ETag previously)
-		if let rTag = remoteETag {
-			if let networkData = try? await url.data(timeout: 5.0) {
-				dataToSave = networkData
-				eTagToSave = rTag
-			}
-		}
-
-		// B: Fallback to Bundle if Network failed or returned no data
+		// Fall back to the bundle if the network failed or returned no data.
 		if dataToSave == nil {
 			Logger.services.debug("Network unavailable or failed for \(imageName). Checking local bundle.")
 
-			// Look in the 'images' subdirectory
-			if let bundleURL = Bundle.main.url(forResource: imageName, withExtension: nil, subdirectory: "images"),
+			// The synchronized images folder lands flat in the bundle root, but check the
+			// subdirectory first in case that ever changes.
+			if let bundleURL = Bundle.main.url(forResource: imageName, withExtension: nil, subdirectory: "images")
+				?? Bundle.main.url(forResource: imageName, withExtension: nil),
 			   let bundleData = try? Data(contentsOf: bundleURL) {
 
 				dataToSave = bundleData
@@ -554,49 +701,42 @@ deviceEntity.architecture = device.architecture
 			}
 		}
 
-		// 4. DB: Save Image and Link to Device on mainContext
-		guard let finalData = dataToSave, let finalETag = eTagToSave else {
+		// Save the image and link it to each device on mainContext.
+		guard let finalData = dataToSave else {
 			Logger.services.error("Could not find image \(imageName) in Network or Bundle.")
 			return
 		}
+		let finalETag = eTagToSave
 
 		await MainActor.run {
+			guard !Task.isCancelled else { return }
 			let context = container.mainContext
 
-			// Find the Device
-			var deviceDescriptor = FetchDescriptor<DeviceHardwareEntity>(
-				predicate: #Predicate { $0.platformioTarget == platform }
-			)
-			deviceDescriptor.fetchLimit = 1
-			guard let deviceEntity = try? context.fetch(deviceDescriptor).first else { return }
+			// Link the image to every device that references it. The device relationship
+			// is to-one (the inverse of DeviceHardwareEntity.images), so each device gets
+			// its own entity — appending one shared entity to several devices would move
+			// it, leaving only the last platform linked.
+			for platform in platforms {
+				var deviceDescriptor = FetchDescriptor<DeviceHardwareEntity>(
+					predicate: #Predicate { $0.platformioTarget == platform }
+				)
+				deviceDescriptor.fetchLimit = 1
+				guard let deviceEntity = try? context.fetch(deviceDescriptor).first else { continue }
 
-			// Find or Create Image Entity
-			var imageDescriptor = FetchDescriptor<DeviceHardwareImageEntity>(
-				predicate: #Predicate { $0.fileName == imageName }
-			)
-			imageDescriptor.fetchLimit = 1
-
-			let existingImg = try? context.fetch(imageDescriptor).first
-			let imageEntity: DeviceHardwareImageEntity
-			if let existingImg {
-				imageEntity = existingImg
-			} else {
-				imageEntity = DeviceHardwareImageEntity()
-				context.insert(imageEntity)
-			}
-
-			imageEntity.fileName = imageName
-			imageEntity.eTag = finalETag
-			imageEntity.svgData = finalData
-
-			// Create Relationship
-			imageEntity.device = deviceEntity
-			if !deviceEntity.images.contains(where: { $0.fileName == imageName }) {
-				deviceEntity.images.append(imageEntity)
+				let existing = deviceEntity.images.first(where: { $0.fileName == imageName })
+				if networkResult == nil, existing?.svgData?.isEmpty == false { continue }
+				let imageEntity = existing ?? DeviceHardwareImageEntity()
+				if existing == nil {
+					context.insert(imageEntity)
+					imageEntity.device = deviceEntity
+				}
+				imageEntity.fileName = imageName
+				imageEntity.eTag = finalETag
+				imageEntity.svgData = finalData
 			}
 
 			try? context.save()
-			Logger.services.info("Saving \(imageName) in database. eTag=\(finalETag)")
+			Logger.services.info("Saving \(imageName) in database. eTag=\(finalETag ?? "none")")
 		}
 	}
 
@@ -673,6 +813,7 @@ extension MeshtasticAPI {
 				deviceEntity.activelySupported = device.activelySupported
 				deviceEntity.displayName = device.displayName
 				deviceEntity.supportLevel = device.supportLevel ?? 0
+				deviceEntity.isMaker = device.isMaker ?? false
 				deviceEntity.requiresDfu = device.requiresDfu ?? false
 				deviceEntity.hasInkHud = device.hasInkHud ?? false
 				deviceEntity.partitionScheme = device.partitionScheme
@@ -732,23 +873,19 @@ extension MeshtasticAPI {
 
 	/// The single image/link refresh pass.
 	///
-	/// Both halves hit the network, so this must never be awaited from the connect path. On a
-	/// captive portal or a zero-rated cellular link the image requests neither succeed nor fail
-	/// fast: `URL.eTag()` sets no timeout and inherits `URLSession.shared`'s 60s default, so none
-	/// of the 82 image requests resolve inside connect Step 3's 30s budget (issue #2196). Callers
-	/// must run this detached.
+	/// Both halves hit the network, so this must never be awaited from the connect path. Image
+	/// requests have a short deadline, but the complete pass is not part of BLE synchronization
+	/// and must not consume connect Step 3's 30s budget (issue #2196). Callers must run this detached.
 	///
 	/// The work list is the union of the bundled catalog and, when the caller has one, the live
 	/// API list. The bundled seed and the API refresh used to run a pass each, so every online
-	/// startup fetched every ETag twice. Unioning here keeps it to one pass without dropping
+	/// startup requested every image twice. Unioning here keeps it to one pass without dropping
 	/// images for hardware that appears in only one of the lists.
 	///
 	/// Deduplication is on image file name, not (platform, name): the request URL derives from the
-	/// file name alone, and `DeviceHardwareImageEntity` is keyed by `fileName` with a single
-	/// `device` relationship, so a name shared by several platforms (3 in the current catalog, and
-	/// 82 entries collapse to 78 names) can only ever belong to one device row. Previously that was
-	/// a fetch per platform racing to claim the row; now it is one fetch attached to the first
-	/// device in catalog order.
+	/// file name alone, so shared artwork is downloaded once. `DeviceHardwareImageEntity` has a
+	/// to-one `device` relationship, so every device that references the file gets its own entity
+	/// containing that downloaded data.
 	private func refreshDeviceImagesAndLinks(apiDevices: [DeviceHardware]?) async {
 		guard let container else { return }
 
@@ -758,9 +895,9 @@ extension MeshtasticAPI {
 		guard !Task.isCancelled else { return }
 
 		// Throttle the network image/link pass to at most once per `staleDeviceImageLinkInterval`
-		// (48h). `processImage` issues a remote ETag HEAD per image (~78) before it even consults
-		// the cache, and Step 3b fires this on every reconnect, so an un-throttled pass re-hits the
-		// network each connect when nothing changed. A database clear (factory/NodeDB reset,
+		// (48h). `processImage` revalidates every image, and Step 3b fires this on every reconnect,
+		// so an un-throttled pass re-hits the network each connect when nothing changed. A database
+		// clear (factory/NodeDB reset,
 		// foreign-database device switch) invalidates the throttle in `clearDatabase`, so the
 		// restore-after-clear pass still runs regardless of this window.
 		//
@@ -790,19 +927,29 @@ extension MeshtasticAPI {
 			bundledDevices = []
 		}
 
-		var work: [(imageName: String, platform: String)] = []
-		var seen = Set<String>()
+		// One download per image, but linked to every device that references it — several
+		// catalog records share one file (all three RAK4631 products use rak4631.svg), and
+		// deduping the link too left every device after the first with no image.
+		var work: [String: [String]] = [:]
+		var order: [String] = []
 		for device in bundledDevices + (apiDevices ?? []) {
-			for imageName in device.images ?? [] where seen.insert(imageName).inserted {
-				work.append((imageName: imageName, platform: device.platformioTarget))
+			for imageName in device.images ?? [] where Self.isImageFile(imageName) {
+				if work[imageName] == nil {
+					work[imageName] = []
+					order.append(imageName)
+				}
+				if work[imageName]?.contains(device.platformioTarget) == false {
+					work[imageName]?.append(device.platformioTarget)
+				}
 			}
 		}
 
 		await withTaskGroup(of: Void.self) { group in
-			for item in work {
+			for imageName in order {
 				if Task.isCancelled { break }   // teardown mid-pass: stop queueing image fetches
+				let platforms = work[imageName] ?? []
 				group.addTask {
-					await self.processImage(imageName: item.imageName, platform: item.platform)
+					await self.processImage(imageName: imageName, platforms: platforms)
 				}
 			}
 		}
@@ -814,11 +961,13 @@ extension MeshtasticAPI {
 			return
 		}
 		await MainActor.run {
+			guard !Task.isCancelled else { return }
 			let context = container.mainContext
 			Self.deleteOrphanedImages(context: context)
 			try? context.save()
 		}
 		await importDeviceLinks()
+		guard !Task.isCancelled else { return }
 		// Mark the pass complete so the next reconnect within the window skips the network. Recorded
 		// even when the pass reached no network: processImage falls back to the app bundle, so it
 		// still restored artwork/links locally — the window only bounds how often we re-check for
@@ -1128,5 +1277,69 @@ extension MeshtasticAPI {
 
 			try? context.save()
 		}
+	}
+}
+
+extension MeshtasticAPI {
+	/// Last ETag seen for an endpoint. URLSession already spares us the download when nothing has
+	/// changed; this spares us the rest — decoding the payload and re-writing rows that are
+	/// already correct. Stored only after the write succeeds, so a run that fails part-way cannot
+	/// convince the next one that the store is current.
+	static func lastETag(for key: String) -> String? {
+		UserDefaults.standard.string(forKey: "api.etag.\(key)")
+	}
+
+	static func setLastETag(_ eTag: String?, for key: String) {
+		guard let eTag else { return }
+		UserDefaults.standard.set(eTag, forKey: "api.etag.\(key)")
+	}
+}
+
+// MARK: - Maintenance UF2 Manifest (OTAFIX bootloader map)
+
+enum MaintenanceUf2RefreshPolicy {
+
+	/// Same interval as `EventFirmwareRefreshPolicy`. The data only changes when the api repo
+	/// is edited and redeployed, so there is nothing to gain from checking more often.
+	static let minimumAttemptInterval: TimeInterval = 6 * 60 * 60
+
+	static func shouldRefresh(lastAttempt: Date, now: Date = Date()) -> Bool {
+		let elapsed = now.timeIntervalSince(lastAttempt)
+		return elapsed < 0 || elapsed >= minimumAttemptInterval
+	}
+}
+
+extension MeshtasticAPI {
+
+	/// Silently refresh the OTAFIX bootloader manifest from the live API.
+	///
+	/// Unlike `refreshDevicesAPIData`/`refreshEventFirmwareAPIData`, this has no SwiftData entity
+	/// to write — `MaintenanceUf2ManifestStore` (see MaintenanceUF2.swift) is an in-memory, lock-protected
+	/// cache, since nothing in the UI observes this data via `@Query`. Because the manifest is not
+	/// saved, the throttle is not either: each launch starts from the bundled seed and fetches once.
+	/// `guard container != nil`
+	/// mirrors every other refresh's no-op-in-seed/test-mode contract even though this function
+	/// never touches the container itself, so `MeshtasticAPIBundledSeedTests`' "no network in seed
+	/// mode" assertion still holds for this resource too.
+	///
+	/// Same fail-safe shape as the other refreshes: a network failure, non-2xx, or decode failure
+	/// is a no-op that leaves the store exactly as it was, never destroying an already-loaded
+	/// manifest over a bad response.
+	func refreshMaintenanceUf2APIData() async {
+		guard container != nil else { return }
+		guard MaintenanceUf2ManifestStore.shared.claimRefreshAttempt() else { return }
+
+		guard let (data, response) = try? await URLSession.shared.data(from: Self.maintenanceUf2URLEndpoint),
+			  let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+			  !data.isEmpty else {
+			Logger.services.warning("maintenanceUf2 API fetch failed or empty — keeping current manifest")
+			return
+		}
+
+		guard MaintenanceUf2ManifestStore.shared.apply(rawBytes: data) else {
+			// MaintenanceUf2ManifestStore.apply already logs the decode failure.
+			return
+		}
+		Logger.services.info("Refreshed maintenanceUf2 manifest from API")
 	}
 }

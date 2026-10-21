@@ -20,8 +20,6 @@ struct ChannelList: View {
 	@State private var isPresentingTraceRouteSentAlert = false
 	@State private var showingHelp = false
 
-	var restrictedChannels = ["gpio", "mqtt", "serial", "admin"]
-
 	private var visibleChannels: [ChannelEntity] {
 		guard let myInfo = node?.myInfo else { return [] }
 
@@ -30,9 +28,12 @@ struct ChannelList: View {
 			channelsByIndex[channel.index] = channel
 		}
 
+		// Module channels (reserved names) carry protocol traffic, not messages.
+		// ChannelForm warns when one of these names is entered, since a hidden
+		// channel with no explanation reads as data loss (#2275).
 		return channelsByIndex
 			.values
-			.filter { !restrictedChannels.contains($0.name?.lowercased() ?? "") }
+			.filter { !ChannelEntity.isReservedModuleName($0.name ?? "") }
 			.sorted { $0.index < $1.index }
 	}
 
@@ -64,7 +65,7 @@ struct ChannelList: View {
 			}
 			.accessibilityHidden(!hasUnreadMessages)
 			.accessibilityLabel(String(localized: "\(unreadCount) unread", comment: "VoiceOver: number of unread messages in a channel"))
-			CircleText(text: String(channel.index), color: .accentColor)
+			CircleText(text: String(channel.index), color: .accentFill)
 				.brightness(0.2)
 
 			VStack(alignment: .leading) {
@@ -72,14 +73,14 @@ struct ChannelList: View {
 					ChannelLock(channel: channel)
 					if channel.name?.isEmpty ?? false {
 						if channel.role == 1 {
-							Text(String("Primary Channel"))
+							Text(String(localized: "Primary Channel"))
 								.font(.headline)
 						} else {
-							Text(String("Channel \(channel.index)"))
+							Text(String(localized: "Channel \(channel.index)"))
 								.font(.headline)
 						}
 					} else {
-						Text(String(channel.name ?? "Channel \(channel.index)"))
+						Text(String(channel.name ?? String(localized: "Channel \(channel.index)")))
 							.font(.headline)
 					}
 
@@ -146,7 +147,12 @@ struct ChannelList: View {
 					channel.mute.toggle()
 					Task {
 						do {
-							_ = try await accessoryManager.saveChannel(channel: channel.protoBuf, fromUser: node.user!, toUser: node.user!)
+							_ = try await accessoryManager.saveChannel(
+								channel: channel.protoBuf,
+								fromUser: node.user!,
+								toUser: node.user!,
+								refreshShareSnapshot: true
+							)
 							Task { @MainActor in
 								do {
 									try context.save()
@@ -196,6 +202,7 @@ struct ChannelList: View {
 		}
 		.sheet(isPresented: $showingHelp) {
 			ChannelsHelp()
+				.trackScreen(.channelsHelp)
 				.presentationDetents([.large])
 				#if !targetEnvironment(macCatalyst)
 				.presentationDragIndicator(.visible)

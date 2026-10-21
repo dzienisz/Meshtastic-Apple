@@ -83,10 +83,8 @@ history view.
 | [`meshtastic:///settings/rangeTest`](meshtastic:///settings/rangeTest) | Range Test |
 | [`meshtastic:///settings/ringtone`](meshtastic:///settings/ringtone) | Ringtone |
 | [`meshtastic:///settings/serial`](meshtastic:///settings/serial) | Serial |
-| [`meshtastic:///settings/statusMessage`](meshtastic:///settings/statusMessage) | Status Message |
 | [`meshtastic:///settings/storeAndForward`](meshtastic:///settings/storeAndForward) | Store & Forward |
 | [`meshtastic:///settings/telemetry`](meshtastic:///settings/telemetry) | Telemetry |
-| [`meshtastic:///settings/trafficManagement`](meshtastic:///settings/trafficManagement) | Traffic Management |
 | **TAK** | |
 | [`meshtastic:///settings/tak`](meshtastic:///settings/tak) | TAK Server |
 | [`meshtastic:///settings/takConfig`](meshtastic:///settings/takConfig) | TAK Module Config |

@@ -9,9 +9,11 @@ import Foundation
 import SwiftUI
 
 struct NodeListFilter: View {
-	@Environment(\.dismiss) private var dismiss
 	@State var editMode = EditMode.active
 	var filterTitle = "Node Filters"
+	/// The contact list only ever shows contacts we can direct message, so filtering it by key
+	/// state would be a no-op. Node and map filters keep the Signed and Encrypted toggles.
+	var showsEncryptedFilter = true
 	@ObservedObject var filters: NodeFilterParameters
 
 	var body: some View {
@@ -36,11 +38,25 @@ struct NodeListFilter: View {
 					.toggleStyle(.switch)
 					.listRowSeparator(.visible)
 
-					Toggle(isOn: $filters.isPkiEncrypted) {
-						Label("Encrypted", systemImage: "lock.fill")
+					Toggle(isOn: $filters.hidesUnheardOnCurrentLora) {
+						Label("Hide Not Heard on Current LoRa", systemImage: UnheardOnCurrentLora.systemImage)
 					}
 					.toggleStyle(.switch)
 					.listRowSeparator(.visible)
+
+					if showsEncryptedFilter {
+						Toggle(isOn: $filters.isSigned) {
+							Label { Text("Signed") } icon: { SignedNodeIcon.image }
+						}
+						.toggleStyle(.switch)
+						.listRowSeparator(.visible)
+
+						Toggle(isOn: $filters.isPkiEncrypted) {
+							Label("Encrypted", systemImage: "lock.fill")
+						}
+						.toggleStyle(.switch)
+						.listRowSeparator(.visible)
+					}
 
 					Toggle(isOn: $filters.isFavorite) {
 						Label("Favorites", systemImage: "star.fill")
@@ -151,23 +167,8 @@ struct NodeListFilter: View {
 			.listStyle(.insetGrouped)
 			.navigationTitle(filterTitle)
 			.navigationBarTitleDisplayMode(.inline)
+			.sheetCloseButton()
 		}
-		#if targetEnvironment(macCatalyst)
-		.overlay(alignment: .topLeading) {
-			Button {
-				dismiss()
-			} label: {
-				Image(systemName: "xmark.circle.fill")
-					.font(.system(size: 34))
-					.symbolRenderingMode(.palette)
-					.foregroundStyle(.white, Color(.systemGray3))
-			}
-			.accessibilityLabel(String(localized: "Close", comment: "VoiceOver: dismiss this sheet"))
-			.buttonStyle(.plain)
-			.padding(.top, 12)
-			.padding(.leading, 14)
-		}
-		#endif
 		.presentationDetents([.large])
 		.presentationContentInteraction(.scrolls)
 		#if !targetEnvironment(macCatalyst)

@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import OSLog
 
 struct NRFDFUSheet: View {
 	@Environment(\.dismiss) var dismiss
@@ -13,6 +14,7 @@ struct NRFDFUSheet: View {
 	@State var showWarningAlert = true
 	@StateObject private var dfuViewModel = DFUViewModel()
 	@State private var showChirpyGame = false
+	@State private var showStopConfirmation = false
 	
 	let firmwareToFlash: URL
 	
@@ -24,55 +26,102 @@ struct NRFDFUSheet: View {
 					onAccept: { showWarningAlert = false }
 				)
 			} else {
-				VStack(spacing: 20.0) {
-					Text("Nordic DFU Update")
-						.font(.title2.bold())
+				GeometryReader { geometry in
+					ScrollView {
+						VStack(spacing: 20.0) {
+							Spacer()
 
-					Text("DFU Firmware Update")
-						.font(.headline)
+							VStack(spacing: 4) {
+								Text("Nordic DFU Update")
+									.font(.title2.bold())
 
-					Text("Please do not leave this screen until this process is complete.")
-						.multilineTextAlignment(.center)
-						.padding()
-
-					CircularProgressView(progress: dfuViewModel.progress, isIndeterminate: (self.dfuViewModel.state == .starting), size: 225.0, subtitleText: dfuViewModel.statusMessage)
-
-					Group {
-						switch dfuViewModel.state {
-						case .idle:
-							Button("Begin Update") {
-								Task {
-									if let connection = accessoryManager.activeConnection?.connection as? BLEConnection {
-										let peripheral = await connection.peripheral
-										dfuViewModel.startDFU(peripheral: peripheral, zipFileUrl: firmwareToFlash)
-									}
-								}
+								Text("DFU Firmware Update")
+									.font(.subheadline)
+									.foregroundStyle(.secondary)
 							}
-							.controlSize(.large)
-							.frame(maxWidth: .infinity)
-							.cornerRadius(10)
-							.buttonStyle(.borderedProminent)
+							.padding(.top, 8)
 
-						case .uploading, .starting, .success:
-							Text(dfuViewModel.rotatingMessage)
+							Text("Please do not leave this screen until the update is complete. You can safely play Chirpy Hop while waiting!")
+								.font(.caption)
+								.foregroundStyle(.secondary)
 								.multilineTextAlignment(.center)
 								.padding(.horizontal)
-						case .error(let message):
-							Text("Error: \(message)")
-						}
-					}.frame(minHeight: 250.0)
 
-					if dfuViewModel.state.gamePhase.isActive {
-						FirmwareUpdateGameButton(isPresented: $showChirpyGame, status: gameStatus)
+							CircularProgressView(
+								progress: dfuViewModel.progress,
+								isIndeterminate: (self.dfuViewModel.state == .starting),
+								isError: dfuViewModel.state.isError,
+								size: 210.0,
+								subtitleText: dfuViewModel.state.isError ? nil : dfuViewModel.statusMessage
+							)
+							.frame(minHeight: 230.0)
+
+							VStack(spacing: 12) {
+								switch dfuViewModel.state {
+								case .idle:
+									Button("Begin Update") {
+										Task {
+											guard let connection = accessoryManager.activeConnection?.connection as? BLEConnection else {
+												Logger.services.error("NRF DFU: no active BLE connection, cannot start")
+												return
+											}
+											let peripheral = await connection.peripheral
+											// The DFU library reboots the radio into the bootloader and
+											// reconnects to it on its own. Stop scanning and auto-connect
+											// first or the app grabs the device out from under it.
+											accessoryManager.otaInProgress = true
+											accessoryManager.shouldAutomaticallyConnectToPreferredPeripheralAfterError = false
+											accessoryManager.stopDiscovery()
+											Logger.services.info("NRF DFU: handing the radio to the DFU library")
+											dfuViewModel.startDFU(peripheral: peripheral, zipFileUrl: firmwareToFlash)
+										}
+									}
+									.controlSize(.large)
+									.frame(maxWidth: .infinity, minHeight: 48)
+									.clipShape(RoundedRectangle(cornerRadius: 10))
+									.buttonStyle(.borderedProminent)
+									.tint(.accentFill)
+
+								case .uploading, .starting, .success:
+									Text(dfuViewModel.rotatingMessage)
+										.font(.headline)
+										.multilineTextAlignment(.center)
+										.padding(.horizontal)
+								case .error(let message):
+									Text("Error: \(message)")
+										.font(.headline)
+										.foregroundStyle(.red)
+										.multilineTextAlignment(.center)
+										.padding(.horizontal)
+								}
+							}
+							.frame(maxWidth: .infinity)
 							.padding(.horizontal)
-							.padding(.bottom)
+
+							if dfuViewModel.state.gamePhase.isActive {
+								FirmwareUpdateGameButton(isPresented: $showChirpyGame, status: gameStatus)
+									.padding(.horizontal)
+									.padding(.top, 4)
+							}
+
+							Spacer()
+						}
+						.frame(minHeight: geometry.size.height)
+						.frame(maxWidth: .infinity)
+						.padding(.bottom, 24)
 					}
 				}
 			}
 		}
 		.overlay(alignment: .topLeading) {
 			Button {
-				dismiss()
+				// Always a way out. An update can stall somewhere the app cannot recover
+				// from, and a disabled close button leaves force-quitting as the only exit.
+				if [.starting, .uploading].contains(dfuViewModel.state) {
+					showStopConfirmation = true
+				} else {
+					dismiss()
+				}
 			} label: {
 				Image(systemName: "xmark.circle.fill")
 					.font(.title)
@@ -82,11 +131,60 @@ struct NRFDFUSheet: View {
 			.accessibilityLabel(String(localized: "Close", comment: "VoiceOver: dismiss this sheet"))
 			.buttonStyle(.plain)
 			.padding()
-			.disabled([.starting, .uploading].contains(dfuViewModel.state))
-			.opacity([.starting, .uploading].contains(dfuViewModel.state) ? 0.3 : 1.0)
 		}
 		.interactiveDismissDisabled(true)
+		.confirmationDialog(
+			Text("Stop the update?", comment: "Title of the confirmation shown when closing an update in progress"),
+			isPresented: $showStopConfirmation,
+			titleVisibility: .visible
+		) {
+			Button(role: .destructive) {
+				Task { await stopUpdate() }
+			} label: {
+				Text("Stop Update", comment: "Button that abandons an update in progress")
+			}
+			Button(role: .cancel) { } label: {
+				Text("Keep Waiting", comment: "Button that returns to an update in progress")
+			}
+		} message: {
+			Text("The device stays in update mode until the update finishes or you power it off and on again.",
+				 comment: "Explains what happens to the device when an update is abandoned")
+		}
 		.firmwareUpdateGame(isPresented: $showChirpyGame, status: gameStatus)
+		.onDisappear {
+			if accessoryManager.otaInProgress {
+				restoreDiscovery()
+			}
+		}
+	}
+
+	/// Abort, then wait for the library to confirm before handing the radio back: restarting
+	/// discovery while NordicDFU still owns the peripheral lets auto-connect grab it out from
+	/// under the abort. Bounded, because an abort that never confirms must not leave the app
+	/// unable to find the radio again.
+	private func stopUpdate() async {
+		dfuViewModel.abort()
+		let deadline = Date().addingTimeInterval(3)
+		while !dfuViewModel.didAbort && Date() < deadline {
+			try? await Task.sleep(for: .milliseconds(100))
+		}
+		if !dfuViewModel.didAbort {
+			Logger.services.error("NRF DFU: abort was not confirmed, handing the radio back anyway")
+		}
+		if accessoryManager.otaInProgress {
+			restoreDiscovery()
+		}
+		dismiss()
+	}
+
+	/// Give the radio back to the app once DFU is finished: restart discovery and
+	/// let auto-connect pick the device up when it reboots into the new firmware.
+	private func restoreDiscovery() {
+		Logger.services.info("NRF DFU: restoring discovery")
+		accessoryManager.otaInProgress = false
+		accessoryManager.userRequestedConnectionCancellation = false
+		accessoryManager.shouldAutomaticallyConnectToPreferredPeripheralAfterError = true
+		accessoryManager.startDiscovery()
 	}
 
 	private var gameStatus: FirmwareUpdateGameStatus {
@@ -162,4 +260,9 @@ private struct UpdateWarningSheet: View {
 		}
 		.padding(.top)
 	}
+}
+
+#Preview {
+	NRFDFUSheet(firmwareToFlash: URL(fileURLWithPath: "/tmp/firmware-nrf52840.zip"))
+		.environmentObject(AccessoryManager.shared)
 }

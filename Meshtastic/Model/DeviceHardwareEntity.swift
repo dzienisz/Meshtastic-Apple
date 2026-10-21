@@ -22,6 +22,7 @@ final class DeviceHardwareEntity {
 	var platformioTarget: String?
 	var requiresDfu: Bool = false
 	var supportLevel: Int = 0
+	var isMaker: Bool = false
 	var variant: String?
 
 	@Relationship(deleteRule: .nullify, inverse: \DeviceHardwareImageEntity.device)
@@ -45,6 +46,7 @@ struct HardwareCatalogRecord: Equatable {
 	let activelySupported: Bool
 	let supportLevel: SupportLevel
 	let architecture: String?
+	let isMaker: Bool
 
 	init(
 		hwModel: Int64,
@@ -53,7 +55,8 @@ struct HardwareCatalogRecord: Equatable {
 		displayName: String?,
 		activelySupported: Bool,
 		supportLevel: SupportLevel,
-		architecture: String? = nil
+		architecture: String? = nil,
+		isMaker: Bool = false
 	) {
 		self.hwModel = hwModel
 		self.hwModelSlug = hwModelSlug
@@ -62,6 +65,7 @@ struct HardwareCatalogRecord: Equatable {
 		self.activelySupported = activelySupported
 		self.supportLevel = supportLevel
 		self.architecture = architecture
+		self.isMaker = isMaker
 	}
 
 	init(_ entity: DeviceHardwareEntity) {
@@ -72,7 +76,8 @@ struct HardwareCatalogRecord: Equatable {
 			displayName: entity.displayName,
 			activelySupported: entity.activelySupported,
 			supportLevel: SupportLevel(rawValue: entity.supportLevel) ?? .discontinued,
-			architecture: entity.architecture
+			architecture: entity.architecture,
+			isMaker: entity.isMaker
 		)
 	}
 }
@@ -86,6 +91,7 @@ struct HardwareCatalogPresentation: Equatable {
 	let activelySupported: Bool?
 	let supportLevel: SupportLevel?
 	let architecture: String?
+	let isMaker: Bool
 }
 
 enum HardwareCatalogResolver {
@@ -94,11 +100,16 @@ enum HardwareCatalogResolver {
 	}
 
 	static func presentation(for hwModel: Int64, in records: [HardwareCatalogRecord]) -> HardwareCatalogPresentation? {
+		guard let record = record(for: hwModel, in: records) else { return nil }
+		return presentation(for: record)
+	}
+
+	static func record(for hwModel: Int64, in records: [HardwareCatalogRecord]) -> HardwareCatalogRecord? {
 		let matches = records.filter { $0.hwModel == hwModel }
 		guard !matches.isEmpty else { return nil }
 
-		if matches.count == 1, let record = matches.first {
-			return presentation(for: record)
+		if matches.count == 1 {
+			return matches.first
 		}
 
 		let canonicalTargets = matches.filter { record in
@@ -106,14 +117,13 @@ enum HardwareCatalogResolver {
 			      let slug = record.hwModelSlug else { return false }
 			return target == normalizedTarget(from: slug)
 		}
-		if canonicalTargets.count == 1, let canonical = canonicalTargets.first {
-			return presentation(for: canonical)
+		if canonicalTargets.count == 1 {
+			return canonicalTargets.first
 		}
 
-		// The radio protocol cannot supply target-level identity. Present the most desirable
+		// The radio protocol cannot supply target-level identity. Choose the most desirable
 		// catalog entry consistently instead of letting database/query order pick one at random.
-		let preferred = matches.sorted(by: isPreferred(_:over:)).first!
-		return presentation(for: preferred)
+		return matches.sorted(by: isPreferred(_:over:)).first
 	}
 
 	private static func presentation(for record: HardwareCatalogRecord) -> HardwareCatalogPresentation {
@@ -122,7 +132,8 @@ enum HardwareCatalogResolver {
 			platformioTarget: record.platformioTarget,
 			activelySupported: record.activelySupported,
 			supportLevel: record.supportLevel,
-			architecture: record.architecture
+			architecture: record.architecture,
+			isMaker: record.isMaker
 		)
 	}
 
@@ -152,5 +163,82 @@ enum HardwareCatalogResolver {
 		case (nil, .some), (nil, nil):
 			return false
 		}
+	}
+}
+
+struct FirmwareHardwareResolution: Equatable {
+	let metadataTarget: String
+	let firmwareTarget: String
+}
+
+enum FirmwareHardwareResolver {
+	static func resolve(
+		pioEnv: String?,
+		hwModel: Int64?,
+		in records: [HardwareCatalogRecord]
+	) -> FirmwareHardwareResolution? {
+		guard let pioEnv else { return nil }
+		let firmwareTarget = pioEnv.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !firmwareTarget.isEmpty else { return nil }
+
+		if records.contains(where: { $0.platformioTarget == firmwareTarget }) {
+			return FirmwareHardwareResolution(
+				metadataTarget: firmwareTarget,
+				firmwareTarget: firmwareTarget
+			)
+		}
+
+		guard let hwModel,
+		      hwModel != 0,
+		      let fallback = HardwareCatalogResolver.record(for: hwModel, in: records),
+		      let metadataTarget = fallback.platformioTarget else { return nil }
+		return FirmwareHardwareResolution(
+			metadataTarget: metadataTarget,
+			firmwareTarget: firmwareTarget
+		)
+	}
+}
+
+struct FirmwareHardwareViewState {
+	private(set) var nodeNum: Int64?
+	private(set) var resolution: FirmwareHardwareResolution?
+
+	mutating func resolve(
+		nodeNum: Int64,
+		pioEnv: String?,
+		hwModel: Int64?,
+		in records: [HardwareCatalogRecord]
+	) {
+		if let cachedNodeNum = self.nodeNum, cachedNodeNum != nodeNum {
+			reset()
+		}
+		guard let resolution = FirmwareHardwareResolver.resolve(
+			pioEnv: pioEnv,
+			hwModel: hwModel,
+			in: records
+		) else { return }
+		self.nodeNum = nodeNum
+		self.resolution = resolution
+	}
+
+	@discardableResult
+	mutating func handlePlatformIOTargetChange(
+		to pioEnv: String?,
+		nodeNum: Int64,
+		hwModel: Int64?,
+		in records: [HardwareCatalogRecord]
+	) -> Bool {
+		let target = pioEnv?.trimmingCharacters(in: .whitespacesAndNewlines)
+		let didReset = target?.isEmpty == false && target != resolution?.firmwareTarget
+		if didReset {
+			reset()
+		}
+		resolve(nodeNum: nodeNum, pioEnv: pioEnv, hwModel: hwModel, in: records)
+		return didReset
+	}
+
+	mutating func reset() {
+		nodeNum = nil
+		resolution = nil
 	}
 }

@@ -480,6 +480,28 @@ enum RegionCodes: Int, CaseIterable, Identifiable {
 			return Config.LoRaConfig.RegionCode.itu2125Cm
 		}
 	}
+
+	/// The EU band plans cap channel bandwidth below what the Turbo presets use, so they
+	/// are not offered here at all rather than merely warned about.
+	var prohibitsTurboPresets: Bool {
+		switch self {
+		case .eu433, .eu868, .eu866, .eu874, .eu917, .euN868:
+			return true
+		default:
+			return false
+		}
+	}
+
+	/// Regions whose firmware profiles include the Lite, Narrow or Tiny presets: the EU 868
+	/// family and the ham bands. Used only when the radio hasn't sent its region preset map.
+	var allowsBandLimitedPresets: Bool {
+		switch self {
+		case .eu868, .eu866, .euN868, .itu12M, .itu22M, .itu32M, .itu170Cm, .itu270Cm, .itu370Cm, .itu2125Cm:
+			return true
+		default:
+			return false
+		}
+	}
 }
 
 enum ModemPresets: Int, CaseIterable, Identifiable {
@@ -529,6 +551,28 @@ enum ModemPresets: Int, CaseIterable, Identifiable {
 		}
 	}
 
+	/// The Turbo presets use the wider bandwidth the US band plan expects. Every other
+	/// preset is narrower, which is why they are flagged there on 2.8 firmware.
+	var isTurbo: Bool {
+		switch self {
+		case .longTurbo, .shortTurbo, .mediumTurbo:
+			return true
+		default:
+			return false
+		}
+	}
+
+	/// Lite (125 kHz), Narrow (62.5 kHz) and Tiny (20 kHz): legal only in the regions that
+	/// `RegionCodes.allowsBandLimitedPresets` lists.
+	var isBandLimited: Bool {
+		switch self {
+		case .liteFast, .liteSlow, .narrowFast, .narrowSlow, .tinyFast, .tinySlow:
+			return true
+		default:
+			return false
+		}
+	}
+
 	/// Presets selectable for a connected device, given whether its firmware
 	/// implements the 2.8 rework. On older firmware the 2.8-only presets are
 	/// dropped. Callers should additionally constrain this to the selected
@@ -549,10 +593,14 @@ enum ModemPresets: Int, CaseIterable, Identifiable {
 	///
 	/// Rules, in order:
 	/// 1. Only acts on 2.8 firmware with `usePreset` on; otherwise keep current.
-	/// 2. A factory-flashed node (region not yet configured) defaults to
-	///    `longTurbo` when **US** is selected, provided Long Turbo is legal there.
-	/// 3. Otherwise, if the current preset is not legal in the region, fall back to
-	///    that region's advertised default. A legal current preset is kept.
+	/// 2. A factory-flashed node (region not yet configured) selecting **US** moves
+	///    stock Long Fast (or no preset) to `longTurbo` — Long Fast's bandwidth is
+	///    not US-compliant — provided Long Turbo is legal there. Only stock Long
+	///    Fast migrates; a deliberate preset is handled by rule 3.
+	/// 3. Keep the current preset when the firmware advertises it as legal in the
+	///    selected region.
+	/// 4. Otherwise, if the current preset is not legal in the region, fall back to
+	///    that region's advertised default.
 	static func presetToSelect(
 		forRegion region: Config.LoRaConfig.RegionCode,
 		factoryFresh: Bool,
@@ -564,13 +612,17 @@ enum ModemPresets: Int, CaseIterable, Identifiable {
 		guard supports2_8, usePreset else { return nil }
 
 		if factoryFresh, region == .us,
+		   currentPreset == nil || currentPreset == .longFast,
 		   regionInfo == nil || regionInfo?.presets.contains(.longTurbo) == true {
 			return .longTurbo
 		}
 
-		guard let info = regionInfo, !info.presets.isEmpty,
-			  let current = currentPreset else { return nil }
-		if info.presets.contains(current.protoEnumValue()) { return nil }
+		if let info = regionInfo, let current = currentPreset,
+		   info.presets.contains(current.protoEnumValue()) {
+			return nil
+		}
+
+		guard let info = regionInfo, !info.presets.isEmpty else { return nil }
 		return ModemPresets(rawValue: info.defaultPreset.rawValue)
 	}
 
@@ -787,6 +839,11 @@ extension Config.LoRaConfig.ModemPreset {
 enum CodingRates {
 	static let validRange = 5...8
 
+	/// The first firmware that uses `coding_rate` while a modem preset is on.
+	/// Before this, `applyModemConfig` took the coding rate from the preset and
+	/// ignored the field (meshtastic/firmware#9155).
+	static let overrideFirmwareVersion = "2.7.18"
+
 	static func options(usePreset: Bool, modemPreset: ModemPresets?) -> [Int] {
 		guard usePreset else {
 			return Array(validRange)
@@ -806,10 +863,23 @@ enum CodingRates {
 		return validRange.lowerBound
 	}
 
+	/// The coding rate the radio is actually using. On firmware that cannot take an
+	/// override the preset's own rate applies, whatever the field holds, so this
+	/// reports the preset rather than the stored value.
+	static func effective(
+		_ codingRate: Int,
+		usePreset: Bool,
+		modemPreset: ModemPresets?,
+		supportsOverride: Bool
+	) -> Int {
+		guard supportsOverride || !usePreset else { return 0 }
+		return normalized(codingRate, usePreset: usePreset, modemPreset: modemPreset)
+	}
+
 	static func description(for codingRate: Int, modemPreset: ModemPresets?) -> String {
 		if codingRate == 0 {
 			let defaultCodingRate = modemPreset?.defaultCodingRate ?? ModemPresets.longFast.defaultCodingRate
-			return String.localizedStringWithFormat("Preset Default (4/%d)".localized, defaultCodingRate)
+			return String.localizedStringWithFormat(String(localized: "Preset Default (4/%d)", comment: "CodingRates.description"), defaultCodingRate)
 		}
 		return "4/\(codingRate)"
 	}

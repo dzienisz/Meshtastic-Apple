@@ -21,8 +21,13 @@ struct CoverageEstimateSeed: Identifiable {
 	var parameters: SitePlannerParameters
 	/// The selected node's coordinate, when launched from a node.
 	var nodeCoordinate: CLLocationCoordinate2D?
+	/// The node's GPS altitude (meters above sea level), when its position has one.
+	/// Combined with offline terrain elevation to derive antenna height above ground.
+	var nodeAltitude: Double?
 	/// The current map centre, when launched from the map toolbar.
 	var mapCenter: CLLocationCoordinate2D?
+	/// The node the form was opened for, saved with the estimate while it runs at the node's position.
+	var nodeNum: Int64?
 }
 
 struct CoverageEstimateForm: View {
@@ -36,11 +41,23 @@ struct CoverageEstimateForm: View {
 	@State private var errorMessage: String?
 	/// In-flight reverse geocode for the chosen coordinate; cancelled when a newer coordinate is picked.
 	@State private var geocodeTask: Task<Void, Never>?
+	/// Reads ground elevation for the chosen coordinate from downloaded offline terrain.
+	@State private var terrainStore = TerrainStore()
+	/// Terrain ground elevation (meters) at the current coordinate, when offline terrain covers it.
+	@State private var groundElevation: Double?
 
 	init(seed: CoverageEstimateSeed, runner: CoverageEstimateRunner) {
 		self.seed = seed
 		self.runner = runner
 		_params = State(initialValue: seed.parameters)
+	}
+
+	/// The seed's node while the coordinate is still the node's own; a run moved elsewhere is not
+	/// that node's coverage.
+	private var runNodeNum: Int64? {
+		guard let nodeNum = seed.nodeNum, let node = seed.nodeCoordinate,
+			  params.latitude == node.latitude, params.longitude == node.longitude else { return nil }
+		return nodeNum
 	}
 
 	private var deviceLocation: CLLocationCoordinate2D? {
@@ -55,7 +72,7 @@ struct CoverageEstimateForm: View {
 				simulationSection
 				displaySection
 			}
-			.scrollDismissesKeyboard(.immediately)
+			.dismissesKeyboardOnScroll()
 			.navigationTitle("Estimate Coverage")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
@@ -70,7 +87,7 @@ struct CoverageEstimateForm: View {
 				}
 				ToolbarItem(placement: .confirmationAction) {
 					Button("Estimate") {
-						runner.start(params: params)
+						runner.start(params: params, nodeNum: runNodeNum)
 					}
 					.disabled(!params.isValid || runner.isRunning)
 				}
@@ -81,6 +98,9 @@ struct CoverageEstimateForm: View {
 				}
 			}
 			.onAppear(perform: generateInitialNameIfNeeded)
+			.task(id: "\(params.latitude),\(params.longitude)") {
+				await refreshGroundElevation()
+			}
 			.onDisappear {
 				// Tear down a still-running headless run if the sheet is swipe-dismissed. Safe on the
 				// success path too — the import already published its result before `dismiss()`.
@@ -118,6 +138,9 @@ struct CoverageEstimateForm: View {
 
 			DecimalField("Latitude", value: $params.latitude)
 			DecimalField("Longitude", value: $params.longitude)
+			if let groundElevation {
+				groundElevationRow(groundElevation)
+			}
 			labeledNumber("Transmit power (W)", value: $params.txPowerWatts)
 			labeledNumber("Frequency (MHz)", value: $params.txFrequencyMHz)
 			lengthField("Antenna height", canonical: $params.txHeightMeters, storedUnit: .meters, imperialUnit: .feet)
@@ -128,7 +151,24 @@ struct CoverageEstimateForm: View {
 			} icon: {
 				Image("custom.radio.tower")
 			}
+		} footer: {
+			if groundElevation != nil {
+				Text("Ground elevation is read from downloaded offline map terrain.")
+			}
 		}
+	}
+
+	/// Read-only ground elevation at the current coordinate, from offline terrain.
+	private func groundElevationRow(_ elevation: Double) -> some View {
+		let displayUnit: UnitLength = Locale.current.measurementSystem == .metric ? .meters : .feet
+		let measurement = Measurement(value: elevation, unit: UnitLength.meters).converted(to: displayUnit)
+		return HStack {
+			Text("Ground elevation")
+			Spacer()
+			Text(measurement, format: .measurement(width: .abbreviated, usage: .asProvided, numberFormatStyle: .number.precision(.fractionLength(0))))
+				.foregroundStyle(.secondary)
+		}
+		.accessibilityElement(children: .combine)
 	}
 
 	private var receiverSection: some View {
@@ -229,6 +269,49 @@ struct CoverageEstimateForm: View {
 		guard params.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
 			  params.hasValidCoordinate else { return }
 		reverseGeocodeName(for: CLLocationCoordinate2D(latitude: params.latitude, longitude: params.longitude))
+	}
+
+	// MARK: - Offline terrain elevation
+
+	/// Look up the ground elevation at the current coordinate from downloaded
+	/// offline terrain. Runs via `.task(id:)` keyed on the coordinate, so edits
+	/// cancel the previous lookup; the short sleep debounces keystrokes in the
+	/// latitude/longitude fields.
+	private func refreshGroundElevation() async {
+		try? await Task.sleep(nanoseconds: 300_000_000)
+		guard !Task.isCancelled else { return }
+		guard params.hasValidCoordinate else {
+			groundElevation = nil
+			return
+		}
+		let sources = OfflineMapManager.shared.terrainSources()
+		guard !sources.isEmpty else {
+			groundElevation = nil
+			return
+		}
+		await terrainStore.configure(sources: sources)
+		let coordinate = CLLocationCoordinate2D(latitude: params.latitude, longitude: params.longitude)
+		let elevation = await terrainStore.elevation(at: coordinate)
+		guard !Task.isCancelled else { return }
+		groundElevation = elevation
+		applyNodeAntennaHeightIfPossible(groundElevation: elevation)
+	}
+
+	/// When the estimate was launched from a node whose position carries a GPS
+	/// altitude, the node's height above ground is its GPS altitude minus the
+	/// terrain ground elevation — the GPS is physically at the antenna. Fills the
+	/// antenna-height field with that, but only at the node's own coordinate,
+	/// only to raise it above the seeded default, and never over a user edit.
+	private func applyNodeAntennaHeightIfPossible(groundElevation: Double?) {
+		guard let groundElevation,
+			  let nodeAltitude = seed.nodeAltitude,
+			  let node = seed.nodeCoordinate,
+			  params.latitude == node.latitude, params.longitude == node.longitude,
+			  params.txHeightMeters == seed.parameters.txHeightMeters else { return }
+		let height = (nodeAltitude - groundElevation).rounded()
+		// Below the default is GPS noise; above 500 m is a bogus altitude fix.
+		guard height > seed.parameters.txHeightMeters, height <= 500 else { return }
+		params.txHeightMeters = height
 	}
 
 	private func reverseGeocodeName(for coordinate: CLLocationCoordinate2D) {

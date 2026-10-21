@@ -12,6 +12,13 @@ if [ -z "$CI_ARCHIVE_PATH" ]; then
 	exit 0
 fi
 
+# TestFlight "What to Test": the opening of each pull request's Summary since the last
+# release, so testers read what changed rather than a list of titles. Xcode Cloud picks up
+# TestFlight/WhatToTest.<locale>.txt from the repository root during an archive action.
+# Best effort; it never fails the build.
+bash "$CI_PRIMARY_REPOSITORY_PATH/ci_scripts/what_to_test.sh" \
+	"$CI_PRIMARY_REPOSITORY_PATH" "$CI_PRIMARY_REPOSITORY_PATH/TestFlight/WhatToTest.en-US.txt" || true
+
 DSYM_DIR="$CI_ARCHIVE_PATH/dSYMs"
 
 if [ ! -d "$DSYM_DIR" ]; then

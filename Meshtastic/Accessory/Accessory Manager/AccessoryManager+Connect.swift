@@ -7,6 +7,7 @@
 
 import Foundation
 import OSLog
+import SwiftData
 import MeshtasticProtobufs
 import CoreBluetooth
 
@@ -35,6 +36,7 @@ extension AccessoryManager {
 		
 		// Clear any errors and stale state from last connection
 		lastConnectionError = nil
+		firmwareUpdateRequired = false
 		self.activeDeviceNum = nil
 		packetsSent = 0
 		packetsReceived = 0
@@ -108,8 +110,16 @@ extension AccessoryManager {
 					// The mesh-traffic monitor (map flyover gate) self-starts its decay timer on the
 					// first inbound packet and is cleared by Step 0's closeConnection() reset(), so
 					// there's no explicit start to make here — it stays correct across connect retries.
-				} catch let error as CBError where error.code == .peerRemovedPairingInformation {
-					await self.connectionStepper?.cancelCurrentlyExecutingStep(withError: AccessoryError.coreBluetoothError(error), cancelFullProcess: true)
+				} catch let error where BLEConnection.terminatesConnectRetries(error) {
+					// A lost bond cannot be fixed by retrying or reconnecting — the user has to
+					// forget the device in iOS Settings. The old catch matched only the raw CBError,
+					// but the transport maps that into AccessoryError.bondLost before throwing, so
+					// the mapped error fell through to retryAll and looped. Kill auto-reconnect
+					// before cancelling or discovery immediately starts the loop again.
+					self.shouldAutomaticallyConnectToPreferredPeripheralAfterError = false
+					self.autoReconnectSuspendedForSession = true
+					self.lastConnectionError = AccessoryError.bondLost
+					await self.connectionStepper?.cancelCurrentlyExecutingStep(withError: AccessoryError.bondLost, cancelFullProcess: true)
 				}
 			}
 			
@@ -237,10 +247,11 @@ extension AccessoryManager {
 				// TODO: do we really need to store the firmware version in the UserDefaults?
 				UserDefaults.firmwareVersion = String(version)
 				
-				let supportedVersion = self.checkIsVersionSupported(forVersion: self.minimumVersion)
-				if !supportedVersion {
-					throw AccessoryError.connectionFailed("🚨" + "Update Your Firmware".localized)
-				}
+				// Below-minimum firmware keeps its connection. Throwing here used to retry the
+				// whole process and then disconnect, which left the user no way to update the
+				// radio from the app. The gate in ContentView blocks everything but the
+				// firmware update screen instead.
+				self.firmwareUpdateRequired = !self.checkIsVersionSupported(forVersion: self.minimumVersion)
 			}
 			
 			// Step 7: Update UI and status to connected
@@ -269,6 +280,16 @@ extension AccessoryManager {
 					ManualConnectionList.shared.insert(device: activeDevice)
 				}
 
+				// Refresh the Messages sharing snapshot here rather than only off the database
+				// completion: a background BLE restoration of an already-connected peripheral
+				// reconnects with wantDatabase false (BLETransport's `.connected` case), so that
+				// completion never fires and the extension is left reporting no radio. Every
+				// connect path reaches this step.
+				if let activeDeviceNum = self.activeDeviceNum {
+					MeshShareSnapshotBuilder.refresh(nodeNum: activeDeviceNum, context: self.context)
+					WidgetDataBroker.shared.refresh(.config)
+				}
+
 				// Best-effort: the notifier bounds stale API refresh and cannot roll back a completed connect.
 				await FirmwareUpdateNotifier.notifyIfNeeded(accessoryManager: self)
 			}
@@ -282,6 +303,7 @@ extension AccessoryManager {
 				// handshake on the ingestion actor. Post-dump lastHeard values also make the
 				// pruning decisions more accurate.
 				_ = await MeshPackets.shared.clearStaleNodes(nodeExpireDays: Int(UserDefaults.purgeStaleNodeDays))
+				await MeshPackets.shared.pruneNeighborLinksAndSave()
 				await self.initializeMqtt()
 				self.initializeLocationProvider()
 				if transport.requiresPeriodicHeartbeat {
@@ -289,8 +311,13 @@ extension AccessoryManager {
 				}
 				
 				if let device = self.activeConnection?.device {
+					// On a reconnect the device metadata can land after the connection is up, so
+					// `device.firmwareVersion` is briefly nil here and the action used to report
+					// nothing at all. Fall back to what this node last told us, read from its own
+					// stored metadata — not `UserDefaults.firmwareVersion`, which holds whichever
+					// radio was checked last and would report that one's version against this one.
 					var version: String?
-					if let firmwareVersion = device.firmwareVersion {
+					if let firmwareVersion = device.firmwareVersion ?? self.storedFirmwareVersion(for: device.num) {
 						if let lastDotIndex = firmwareVersion.lastIndex(of: ".") {
 							version = String(firmwareVersion[...(lastDotIndex)].dropLast())
 						} else {
@@ -312,12 +339,18 @@ extension AccessoryManager {
 		do {
 			try await connectionStepper?.run()
 			Logger.transport.debug("🔗 [Connect] ConnectionStepper completed.")
+			// The scan pause covers the whole handshake — pairing happens during the
+			// notify subscription, after the link comes up — so resume only now that
+			// every step finished. Failed attempts resume via connectionDidDisconnect.
+			if let bleTransport = transportForType(.ble) as? BLETransport {
+				await bleTransport.resumeScanningAfterConnectionEstablished()
+			}
 		} catch AccessoryError.tooManyRetries {
 			self.lastConnectionError = AccessoryError.tooManyRetries
 			try await self.closeConnection()
 			updateState(.discovering)
 		} catch {
-			Logger.transport.error("🔗 [Connect] Error returned by connectionStepper: \(error)")
+			Logger.transport.error("🔗 [Connect] Error returned by connectionStepper: \(error, privacy: .public)")
 			try await self.closeConnection()
 			updateState(.discovering)
 			self.lastConnectionError = error
@@ -326,6 +359,19 @@ extension AccessoryManager {
 		// All done, one way or another, clean up
 		self.connectionStepper = nil
 	}
+	/// The firmware version this node last reported, from its own stored metadata.
+	///
+	/// Per node on purpose. `UserDefaults.firmwareVersion` holds whichever radio was version
+	/// checked last, so using it here would report one radio's firmware against another when
+	/// a second radio connects before its metadata arrives.
+	func storedFirmwareVersion(for nodeNum: Int64?) -> String? {
+		guard let nodeNum else { return nil }
+		let descriptor = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate { $0.num == nodeNum })
+		guard let stored = try? context.fetch(descriptor).first?.metadata?.firmwareVersion,
+			  !stored.isEmpty else { return nil }
+		return stored
+	}
+
 }
 
 // Sequentially stepped tasks

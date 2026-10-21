@@ -130,7 +130,7 @@ enum PerformanceSeedData {
 		}
 	}
 
-	static func seedIfNeeded(using controller: PersistenceController, configuration: PerformanceSeedConfiguration, router: Router) {
+	static func seedIfNeeded(using controller: PersistenceController, configuration: PerformanceSeedConfiguration, appState: AppState) {
 		let start = Date()
 		let context = controller.container.mainContext
 
@@ -142,10 +142,10 @@ enum PerformanceSeedData {
 				seedMessageHistory(baseNodeNum: 0x0A00_0000, now: Date(), configuration: configuration, context: context)
 				try? context.save()
 			}
-			router.selectedTab = configuration.initialTab
-			if configuration.opensLocalStatsLog {
-				router.selectedNodeNum = 0x0A00_0000
-			}
+			appState.launchNavigation = NavigationState(
+				selectedTab: configuration.initialTab,
+				nodeListSelectedNodeNum: configuration.opensLocalStatsLog ? 0x0A00_0000 : nil
+			)
 			Logger.data.info("📈 [PerfSeed] Existing large mesh seed found; skipping reseed")
 			return
 		}
@@ -163,13 +163,16 @@ enum PerformanceSeedData {
 			}
 		}
 		seedMessageHistory(baseNodeNum: baseNodeNum, now: now, configuration: configuration, context: context)
+		if configuration.style == .marketing {
+			MarketingSeed.insertNeighborReports(now: now, context: context)
+		}
 
 		do {
 			try context.save()
-			router.selectedTab = configuration.initialTab
-			if configuration.opensLocalStatsLog {
-				router.selectedNodeNum = baseNodeNum
-			}
+			appState.launchNavigation = NavigationState(
+				selectedTab: configuration.initialTab,
+				nodeListSelectedNodeNum: configuration.opensLocalStatsLog ? baseNodeNum : nil
+			)
 			let duration = Date().timeIntervalSince(start)
 			Logger.data.info("📈 [PerfSeed] Finished seeding \(configuration.nodeCount, privacy: .public) nodes in \(duration, privacy: .public) seconds")
 		} catch {
@@ -226,7 +229,7 @@ enum PerformanceSeedData {
 		let user = UserEntity()
 		user.num = nodeNum
 		user.numString = String(nodeNum)
-		user.userId = "!\(nodeNum.toHex())"
+		user.userId = nodeNum.toHex()   // toHex() already prefixes "!"
 		user.longName = "Perf Node \(index)"
 		user.shortName = shortName(for: index)
 		user.hwModel = hardwareModel(for: index)
@@ -303,7 +306,7 @@ enum PerformanceSeedData {
 			deviceMetrics.uptimeSeconds = configuration.style == .marketing
 				? Int32(86_400 * (3 + index % 40) + sample * 300)   // 3–43 days, like a real long-lived node
 				: Int32(index * 60 + sample)
-			deviceMetrics.nodeTelemetry = node
+			deviceMetrics.nodeNum = node.num
 			context.insert(deviceMetrics)
 
 			let environmentMetrics = TelemetryEntity()
@@ -313,7 +316,7 @@ enum PerformanceSeedData {
 			environmentMetrics.relativeHumidity = 25 + Float((index + sample * 2) % 70)
 			environmentMetrics.barometricPressure = 980 + Float((index + sample) % 70)
 			environmentMetrics.gasResistance = Float((index + sample) % 500)
-			environmentMetrics.nodeTelemetry = node
+			environmentMetrics.nodeNum = node.num
 			context.insert(environmentMetrics)
 		}
 
@@ -338,7 +341,7 @@ enum PerformanceSeedData {
 			localStats.numOnlineNodes = Int32(max(1, min(250, configuration.nodeCount - (sample % 12))))
 			localStats.numTotalNodes = Int32(configuration.nodeCount)
 			localStats.uptimeSeconds = Int32(86_400 + index * 60 + sample * 900)
-			localStats.nodeTelemetry = node
+			localStats.nodeNum = node.num
 			context.insert(localStats)
 		}
 	}
@@ -1152,6 +1155,38 @@ enum MarketingSeed {
 		let dLat = (unit(index * 2 + 1, salt: 0xA0761D6478BD642F) - 0.5) * 2 * anchor.radius
 		let dLon = (unit(index * 2 + 2, salt: 0xE7037ED1A0B428DB) - 0.5) * 2 * anchor.radius
 		return (anchor.lat + dLat, anchor.lon + dLon)
+	}
+
+	// MARK: Neighbor Info
+
+	/// Pairs of anchors (by index) whose hero nodes hear each other, for the Direct Links layer.
+	private static let neighborPairs: [(Int, Int)] = [
+		(1, 2), (2, 3), (2, 8), (8, 4), (4, 12), (10, 11), (9, 11), (9, 13), (13, 14), (12, 14),
+		(13, 33), (3, 21), (17, 18), (17, 19), (18, 20), (16, 15), (15, 23), (23, 5), (5, 7), (5, 22),
+		(22, 24), (6, 7), (25, 34), (25, 28), (28, 27), (26, 27), (26, 32), (30, 31), (29, 30), (35, 25)
+	]
+	private static let neighborSnrs: [Float] = [8.5, 3.0, -6.25, -14.0, -19.0, -21.5, -24.0, 5.5]
+
+	/// Neighbor Info rows between anchor nodes: both directions for most pairs, one for every
+	/// third, with a spread of signal and age so the lines show each color and fade.
+	static func insertNeighborReports(now: Date, context: ModelContext) {
+		func add(_ reporter: Int, _ neighbor: Int, snr: Float, ago: TimeInterval) {
+			let row = NeighborLinkEntity()
+			row.reporterNum = nodeNum(for: reporter)
+			row.neighborNum = nodeNum(for: neighbor)
+			row.key = NeighborLinkEntity.key(reporter: row.reporterNum, neighbor: row.neighborNum)
+			row.snr = snr
+			row.receivedAt = now.addingTimeInterval(-ago)
+			row.reporterIntervalSecs = 21_600
+			context.insert(row)
+		}
+		for (index, pair) in neighborPairs.enumerated() {
+			let ago = TimeInterval([1, 3, 9, 16][index % 4] * 3_600)
+			add(pair.0, pair.1, snr: neighborSnrs[index % neighborSnrs.count], ago: ago)
+			if index % 3 != 0 {
+				add(pair.1, pair.0, snr: neighborSnrs[(index + 3) % neighborSnrs.count], ago: ago + 1_800)
+			}
+		}
 	}
 
 	// MARK: Node flavor

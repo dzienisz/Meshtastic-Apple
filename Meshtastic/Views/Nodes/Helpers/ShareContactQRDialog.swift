@@ -13,17 +13,27 @@ import MeshtasticProtobufs
 import OSLog
 
 enum ShareContactQR {
-	static let urlPrefix = "https://meshtastic.org/v/#"
+	static let urlPrefix = MeshContactURL.canonicalPrefix + "#"
 
+	/// Whether there is anything worth sharing for this node.
+	///
+	/// Carrying the public key is the point of a shared contact — it is what lets the receiving radio
+	/// direct message the node. A contact with no key is worse than useless: firmware assigns
+	/// `public_key` unconditionally when it applies one, so it clears the key the receiving radio
+	/// already held. We refuse those on import, so we must not hand them out either.
 	static func canShareContact(for node: NodeInfoEntity) -> Bool {
-		node.user?.unmessagable == false
+		node.user?.unmessagable == false && node.user?.publicKey?.isEmpty == false
 	}
 
 	static func canShareContact(for node: NodeInfo) -> Bool {
-		node.hasUser && !node.user.isUnmessagable
+		node.hasUser && !node.user.isUnmessagable && !node.user.publicKey.isEmpty
 	}
 
-	static func urlString(for node: NodeInfo, manuallyVerified: Bool) -> String? {
+	static func urlString(
+		for node: NodeInfo,
+		manuallyVerified: Bool,
+		exchangeRequested: Bool = false
+	) -> String? {
 		guard canShareContact(for: node) else { return nil }
 
 		var contact = SharedContact()
@@ -31,8 +41,10 @@ enum ShareContactQR {
 		contact.user = node.user
 		contact.manuallyVerified = manuallyVerified
 		do {
-			let contactString = try contact.serializedData().base64EncodedString()
-			return urlPrefix + contactString.base64ToBase64url()
+			return try MeshContactURL.urlString(
+				for: contact,
+				exchangeRequested: exchangeRequested
+			)
 		} catch {
 			Logger.services.error("Error serializing contact: \(error)")
 			return nil
@@ -63,7 +75,7 @@ struct ShareContactQRDialog: View {
 
 	var body: some View {
 		VStack(spacing: 20) {
-			Text("Share Contact QR")
+			Text("Share Contact")
 				.font(.title2)
 				.padding(.top)
 			Text(node.user.longName)
@@ -73,7 +85,6 @@ struct ShareContactQRDialog: View {
 				.resizable()
 				.scaledToFit()
 				.background(Color(.systemBackground))
-				.cornerRadius(16)
 				.shadow(radius: 4)
 			Text("Scan this QR code to add \(node.user.longName) to another device.")
 				.font(.subheadline)
@@ -88,7 +99,7 @@ struct ShareContactQRDialog: View {
 						image: Image(uiImage: qrImage)
 					  )
 			)
-			#if !targetEnvironment(macCatalyst)
+			#if !targetEnvironment(macCatalyst) && !os(visionOS)
 			if #available(iOS 18, *) {
 				NFCWriteButton(
 					payload: qrString,
@@ -96,12 +107,26 @@ struct ShareContactQRDialog: View {
 				)
 			}
 			#endif
-			Button("Done") { dismiss() }
-				.buttonStyle(.borderedProminent)
-				.padding(.bottom)
 		}
 		.padding()
 		.frame(maxWidth: 350)
+		// Widened first, or the overlay would anchor to the 350pt content rather than the sheet.
+		.frame(maxWidth: .infinity)
+		.overlay(alignment: .topLeading) {
+			Button {
+				dismiss()
+			} label: {
+				Image(systemName: "xmark.circle.fill")
+					.font(.system(size: 34))
+					.symbolRenderingMode(.palette)
+					.foregroundStyle(.white, Color(.systemGray3))
+			}
+			.accessibilityLabel(String(localized: "Close", comment: "VoiceOver: dismiss this sheet"))
+			.buttonStyle(.plain)
+			.padding(.top, 12)
+			.padding(.leading, 14)
+		}
+		.presentationDragIndicator(.visible)
 	}
 }
 

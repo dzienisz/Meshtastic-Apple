@@ -75,6 +75,7 @@ struct AppSettings: View {
 					}
 					.sheet(isPresented: $isPresentingAppIconSheet) {
 						AppIconPicker(isPresenting: self.$isPresentingAppIconSheet)
+							.trackScreen(.appIconPicker)
 							.presentationDetents([.medium])
 					}
 #endif
@@ -200,7 +201,7 @@ struct AppSettings: View {
 								
 								/// Delete any node database backups too.
 								for entry in NodeBackupManager.shared.listBackups() {
-									_ = NodeBackupManager.shared.deleteBackup(forNode: entry.nodeNum)
+									_ = NodeBackupManager.shared.deleteBackup(forKey: entry.key)
 								}
 								await MeshPackets.shared.flushDebouncedSaves()
 								await MeshPackets.shared.clearDatabase(includeRoutes: true)
@@ -316,18 +317,15 @@ private struct BuildTestNodeSnapshot {
 		hopsAway = Int(node.hopsAway)
 		snr = node.snr
 
-		if node.user?.pkiEncrypted ?? false {
-			if node.user?.keyMatch ?? false {
-				keyStatusImage = "lock.fill"
-				keyStatusColor = .green
-			} else {
-				keyStatusImage = "key.slash"
-				keyStatusColor = .red
-			}
-		} else {
-			keyStatusImage = "lock.open.fill"
-			keyStatusColor = .yellow
-		}
+		let indicator = NodeSecurityIndicator.status(
+			firmwareVersion: node.metadata?.firmwareVersion,
+			pkiEncrypted: node.user?.pkiEncrypted ?? false,
+			keyMatch: node.user?.keyMatch ?? false,
+			signed: node.hasXeddsaSigned,
+			verified: node.isKeyManuallyVerified
+		)
+		keyStatusImage = indicator.glyph.image
+		keyStatusColor = indicator.glyph.color
 	}
 }
 
@@ -363,11 +361,11 @@ private struct BuildTestNodeStandardRow: View {
 								imageColor: node.isOnline ? .green : .orange,
 								text: node.lastHeardText)
 					IconAndText(systemName: node.roleSystemName,
-								text: "Role: \(node.roleName)")
+								text: String(localized: "Role: \(node.roleName)"))
 					if node.isUnmonitored {
 						IconAndText(systemName: "iphone.slash",
 									renderingMode: .multicolor,
-									text: "Unmonitored")
+									text: "Unmonitored".localized)
 					}
 					if node.isStoreForwardRouter {
 						IconAndText(systemName: "envelope.arrow.triangle.branch",
@@ -376,7 +374,7 @@ private struct BuildTestNodeStandardRow: View {
 					}
 					HStack {
 						if node.channel > 0 {
-							IconAndText(systemName: "\(node.channel).circle.fill", text: "Channel")
+							IconAndText(systemName: "\(node.channel).circle.fill", text: "Channel".localized)
 						}
 						if node.viaMqtt {
 							IconAndText(systemName: "dot.radiowaves.up.forward",
@@ -386,7 +384,7 @@ private struct BuildTestNodeStandardRow: View {
 					}
 					if node.hopsAway > 0 {
 						HStack {
-							IconAndText(systemName: "hare", text: "Hops Away:")
+							IconAndText(systemName: "hare", text: "Hops Away:".localized)
 							Image(systemName: "\(node.hopsAway).square")
 								.font(.title2)
 						}

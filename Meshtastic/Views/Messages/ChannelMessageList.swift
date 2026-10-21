@@ -10,39 +10,11 @@ import MeshtasticProtobufs
 import OSLog
 import SwiftUI
 
-private struct ChannelMessageTimelineCursor: Comparable {
-	let timestamp: Int32
-	let messageId: Int64
 
-	static func < (lhs: ChannelMessageTimelineCursor, rhs: ChannelMessageTimelineCursor) -> Bool {
-		if lhs.timestamp == rhs.timestamp {
-			return lhs.messageId < rhs.messageId
-		}
-		return lhs.timestamp < rhs.timestamp
-	}
-}
-
-private struct ChannelMessageListChangeToken: Equatable {
-	let latest: ChannelMessageTimelineCursor?
-	let count: Int
-	// Tallies of messages whose ACK has resolved, kept as separate delivered/errored counts
-	// rather than a single sum: an errored→delivered transition leaves the sum unchanged
-	// (delivered +1, errored −1) but moves both tallies, so the token still changes and the list
-	// reloads. Together with `latest`/`count` these cover every ACK transition the app produces:
-	// in-place mutations only ever move a message *into* delivered/errored (a tally changes), and
-	// the sole route back to "waiting" is RetryButton, which deletes the message and inserts a
-	// fresh one — moving `latest`/`count`. (There is deliberately no `max(ackTimestamp)` signal:
-	// `ackTimestamp` is stamped from the remote `packet.rxTime`, so it isn't reliably monotonic
-	// and would add an unindexed sort to the 5s poll for a net-zero case that can't occur.) An
-	// incoming ACK changes neither `latest` nor `count`, so without these tallies the poll-based
-	// refresh would never reload and the row would stay on "Waiting to be acknowledged" until the
-	// view is rebuilt.
-	let deliveredAckCount: Int
-	let erroredAckCount: Int
-}
 
 struct ChannelMessageList: View {
 	@EnvironmentObject var appState: AppState
+	@EnvironmentObject private var router: Router
 	@Environment(\.scenePhase) var scenePhase
 	@Environment(\.modelContext) private var context
 	@EnvironmentObject var accessoryManager: AccessoryManager
@@ -54,6 +26,8 @@ struct ChannelMessageList: View {
 	@State private var messageToHighlight: Int64 = 0
 	@State private var messageLimit: Int = 100
 	@State private var messages: [MessageEntity] = []
+	@State private var bottomScrollRequest = 0
+	@State private var scrollTracker = MessageScrollTracker()
 	@State private var searchQuery = ""
 	@State private var searchMatches: [MessageSearchMatch] = []
 	@State private var currentMatchIndex = -1
@@ -62,10 +36,6 @@ struct ChannelMessageList: View {
 	@State private var repliesByID: [Int64: MessageEntity] = [:]
 	@State private var tapbacksByReplyID: [Int64: [MessageEntity]] = [:]
 	@State private var hasEarlierMessages = false
-	@State private var latestKnownMessageToken: ChannelMessageListChangeToken?
-	@State private var latestVisibleTapbackCursor: ChannelMessageTimelineCursor?
-	@State private var latestKnownChannelTapbackCursor: ChannelMessageTimelineCursor?
-	@State private var visibleTapbackCount = 0
 	@State private var tapbackTargetMessage: MessageEntity?
 	@State private var tapbackText = ""
 	@FocusState var tapbackFocused: Bool
@@ -100,8 +70,12 @@ struct ChannelMessageList: View {
 			}
 			Logger.data.info("📖 [App] All unread messages marked as read.")
 			appState.unreadChannelMessages = myInfo.unreadMessages
-			// Refresh other unread surfaces (CarPlay templates) too.
-			NotificationCenter.default.post(name: .meshMessagesDidChange, object: nil)
+			// Refresh other unread surfaces (CarPlay templates) too. Only when something was
+			// actually marked read: this view reloads on that notification, and an unconditional
+			// post would have it marking read and reloading in a loop.
+			if !readMessageIDs.isEmpty {
+				NotificationCenter.default.post(name: .meshMessagesDidChange, object: nil)
+			}
 		} catch {
 			Logger.data.error("Failed to read messages: \(error.localizedDescription, privacy: .public)")
 		}
@@ -110,18 +84,34 @@ struct ChannelMessageList: View {
 	@MainActor
 	private func loadMessages(markReadAfterLoad: Bool = false) {
 		do {
+			let previousLastID = messages.last?.messageId
+			// Read before the fetch. New rows move the marker, so a later read would
+			// describe the layout this reload is about to change.
+			let followNewMessage = scrollTracker.isNearBottom
 			let fetchedMessages = try fetchMessages(limit: messageLimit + 1)
 			hasEarlierMessages = fetchedMessages.count > messageLimit
 
-			let visibleMessages = Array(fetchedMessages.prefix(messageLimit).reversed())
+			// The ForEach below keys on messageId. The store can transiently hold two
+			// rows with the same messageId (a sent message and its mesh echo, racing
+			// across contexts before the unique constraint merges them) — duplicate
+			// ForEach ids corrupt the List's collection-view diff and crash. Keep the
+			// first occurrence; the merge collapses the rows moments later.
+			let visibleMessages = MessageEntity.deduplicatedByMessageId(
+				Array(fetchedMessages.prefix(messageLimit).reversed())
+			)
 			let previousMessage = hasEarlierMessages ? fetchedMessages[messageLimit] : nil
 
 			messages = visibleMessages
+			if MessageScrollTracker.shouldFollowReload(
+				nearBottomBeforeFetch: followNewMessage,
+				previousLastID: previousLastID,
+				newLastID: visibleMessages.last?.messageId
+			) {
+				bottomScrollRequest &+= 1
+			}
 			previousByID = buildPreviousByID(for: visibleMessages, previousMessage: previousMessage)
 			repliesByID = try fetchReplies(for: visibleMessages)
 			replaceTapbacks(try fetchTapbacks(for: visibleMessages))
-			latestKnownMessageToken = try fetchMessageChangeToken(latestMessage: fetchedMessages.first)
-			latestKnownChannelTapbackCursor = try fetchLatestTapbackCursor()
 
 			if markReadAfterLoad {
 				markMessagesAsRead()
@@ -146,71 +136,10 @@ struct ChannelMessageList: View {
 		return try context.fetch(descriptor)
 	}
 
-	private func fetchMessageChangeToken(latestMessage: MessageEntity? = nil) throws -> ChannelMessageListChangeToken {
-		let latest = try latestMessage ?? fetchMessages(limit: 1).first
-		let acks = try Self.resolvedAckCounts(in: context, channelIndex: channel.index)
-		return ChannelMessageListChangeToken(
-			latest: latest.map(cursor(for:)),
-			count: try fetchMessageCount(),
-			deliveredAckCount: acks.delivered,
-			erroredAckCount: acks.errored
-		)
-	}
 
-	/// Resolved-ACK tallies for this channel: delivered (`receivedACK`) and failed
-	/// (`ackError != 0`) counted separately. A message is shown as "Waiting to be acknowledged"
-	/// until it resolves; folding both tallies into the change token makes the poll reload on any
-	/// ACK state change. Keeping them distinct means errored→delivered (which keeps the sum
-	/// constant) still moves a tally. Exposed `static` so the regression tests exercise these
-	/// exact predicates.
-	///
-	/// Two single-term `fetchCount`s rather than one `||` predicate: a compound `||` (and a fourth
-	/// `&&` term such as an `isEmoji` filter) exceeds the `#Predicate` macro's type-check budget.
-	/// Not filtering `isEmoji` only means an acked tapback triggers one extra benign reload.
-	static func resolvedAckCounts(in context: ModelContext, channelIndex: Int32) throws -> (delivered: Int, errored: Int) {
-		let deliveredDescriptor = FetchDescriptor<MessageEntity>(
-			predicate: #Predicate<MessageEntity> {
-				$0.channel == channelIndex && $0.toUser == nil && $0.receivedACK
-			}
-		)
-		let erroredDescriptor = FetchDescriptor<MessageEntity>(
-			predicate: #Predicate<MessageEntity> {
-				$0.channel == channelIndex && $0.toUser == nil && $0.ackError != 0
-			}
-		)
-		return (try context.fetchCount(deliveredDescriptor), try context.fetchCount(erroredDescriptor))
-	}
 
-	private func fetchMessageCount() throws -> Int {
-		let channelIndex = channel.index
-		let descriptor = FetchDescriptor<MessageEntity>(
-			predicate: #Predicate<MessageEntity> {
-				$0.channel == channelIndex && $0.toUser == nil && $0.isEmoji == false
-			}
-		)
-		return try context.fetchCount(descriptor)
-	}
 
-	private func fetchLatestTapbackCursor() throws -> ChannelMessageTimelineCursor? {
-		let channelIndex = channel.index
-		let isEmoji = true
-		var descriptor = FetchDescriptor<MessageEntity>(
-			predicate: #Predicate<MessageEntity> { message in
-				message.channel == channelIndex && message.toUser == nil && message.isEmoji == isEmoji && message.replyID > 0
-			},
-			sortBy: [
-				SortDescriptor(\MessageEntity.messageTimestamp, order: .reverse),
-				SortDescriptor(\MessageEntity.messageId, order: .reverse)
-			]
-		)
-		descriptor.fetchLimit = 1
-		let fetched: [MessageEntity] = try context.fetch(descriptor)
-		return fetched.first.map(cursor(for:))
-	}
 
-	private func cursor(for message: MessageEntity) -> ChannelMessageTimelineCursor {
-		ChannelMessageTimelineCursor(timestamp: message.messageTimestamp, messageId: message.messageId)
-	}
 
 	private func buildPreviousByID(for visibleMessages: [MessageEntity], previousMessage: MessageEntity?) -> [Int64: MessageEntity] {
 		var result: [Int64: MessageEntity] = [:]
@@ -260,52 +189,14 @@ struct ChannelMessageList: View {
 		return try context.fetch(descriptor)
 	}
 
-	@MainActor
-	@discardableResult
-	private func refreshVisibleTapbacks(markReadAfterLoad: Bool) -> Bool {
-		do {
-			let tapbacks = try fetchTapbacks(for: messages)
-			let latestTapbackCursor = tapbacks.map(cursor(for:)).max()
-			guard latestTapbackCursor != latestVisibleTapbackCursor || tapbacks.count != visibleTapbackCount else {
-				return true
-			}
-			replaceTapbacks(tapbacks)
-			if markReadAfterLoad {
-				markMessagesAsRead()
-			}
-			return true
-		} catch {
-			Logger.data.error("Failed to refresh channel message tapbacks: \(error.localizedDescription, privacy: .public)")
-			return false
-		}
-	}
 
-	@MainActor
-	private func refreshIfNeeded() {
-		do {
-			if try fetchMessageChangeToken() != latestKnownMessageToken {
-				loadMessages(markReadAfterLoad: routerIsShowingThisChannel())
-			} else {
-				let latestTapbackCursor = try fetchLatestTapbackCursor()
-				if latestTapbackCursor != latestKnownChannelTapbackCursor {
-					if refreshVisibleTapbacks(markReadAfterLoad: routerIsShowingThisChannel()) {
-						latestKnownChannelTapbackCursor = latestTapbackCursor
-					}
-				}
-			}
-		} catch {
-			Logger.data.error("Failed to refresh channel messages: \(error.localizedDescription, privacy: .public)")
-		}
-	}
 
 	private func replaceTapbacks(_ tapbacks: [MessageEntity]) {
-		latestVisibleTapbackCursor = tapbacks.map(cursor(for:)).max()
-		visibleTapbackCount = tapbacks.count
 		tapbacksByReplyID = Dictionary(grouping: tapbacks, by: \.replyID)
 	}
 
 	private func routerIsShowingThisChannel() -> Bool {
-		guard appState.router.selectedTab == .messages else { return false }
+		guard router.selectedTab == .messages else { return false }
 		return scenePhase == .active
 	}
 
@@ -323,7 +214,7 @@ struct ChannelMessageList: View {
 					isEmoji: true,
 					replyID: target.messageId
 				)
-				await MainActor.run { _ = refreshVisibleTapbacks(markReadAfterLoad: routerIsShowingThisChannel()) }
+				await MainActor.run { loadMessages(markReadAfterLoad: routerIsShowingThisChannel()) }
 			} catch {
 				Logger.services.warning("Failed to send tapback.")
 			}
@@ -389,43 +280,61 @@ struct ChannelMessageList: View {
 					}
 					Color.clear
 						.frame(height: 1)
+						.trackMessageBottomPosition(scrollTracker)
 						.id("bottomAnchor")
 				}
 			}
+			.trackMessageScrollViewport(scrollTracker)
+			.messageBottomScrollPosition(request: bottomScrollRequest, tracker: scrollTracker)
 			.defaultScrollAnchor(.bottom)
 			.defaultScrollAnchorBottomSizeChanges()
-			.scrollDismissesKeyboard(.immediately)
+			.dismissesKeyboardOnScroll()
 			.onAppear {
 				DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-					scrollView.scrollTo("bottomAnchor", anchor: .bottom)
+					if #available(iOS 18.0, macOS 15.0, *) {
+						bottomScrollRequest &+= 1
+					} else {
+						scrollView.scrollTo("bottomAnchor", anchor: .bottom)
+					}
 				}
 			}
 				.task(id: "\(routerIsShowingThisChannel())-\(channel.index)") {
 					let isVisible = routerIsShowingThisChannel()
 					loadMessages(markReadAfterLoad: isVisible)
 					guard isVisible else { return }
+					// Reloads are driven by .meshMessagesDidChange below. This is only a safety
+					// net for a change that somehow saved without one.
 					while !Task.isCancelled {
-						try? await Task.sleep(for: .seconds(5))
+						try? await Task.sleep(for: .seconds(30))
 						guard !Task.isCancelled else { return }
-						refreshIfNeeded()
+						loadMessages(markReadAfterLoad: routerIsShowingThisChannel())
+					}
+			}
+			.onChange(of: bottomScrollRequest) {
+				// On iOS 17, follow the real message row only when loadMessages saw
+				// the reader near the bottom, or after the reader sends a message.
+				if #unavailable(iOS 18.0, macOS 15.0), let lastID = messages.last?.messageId {
+					scrollView.scrollTo(lastID, anchor: .bottom)
 				}
 			}
-			.onChange(of: messages.last?.messageId) {
-				DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-					scrollView.scrollTo("bottomAnchor", anchor: .bottom)
-				}
-			}
-			// Incoming channel traffic bumps appState.unreadChannelMessages (set in
-			// textMessageAppPacket); refresh on that signal so messages land live instead
-			// of waiting up to 5s for the poll loop in .task above.
-			.onChange(of: appState.unreadChannelMessages) {
-				refreshIfNeeded()
+			// Message writes happen on the packet actor's own context, which SwiftData does not
+			// propagate here, so the list reloads on the notification that actor posts after a
+			// save. Debounced because a burst of packets saves several times.
+			.onReceive(
+				NotificationCenter.default.publisher(for: .meshMessagesDidChange)
+					.debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+			) { _ in
+				loadMessages(markReadAfterLoad: routerIsShowingThisChannel())
 			}
 			.onChange(of: messageToHighlight) { scrollToHighlighted(scrollView) }
 			.onChange(of: messageFieldFocused) {
 				if messageFieldFocused {
 					DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-						scrollView.scrollTo("bottomAnchor", anchor: .bottom)
+						if #available(iOS 18.0, macOS 15.0, *) {
+							bottomScrollRequest &+= 1
+						} else {
+							scrollView.scrollTo("bottomAnchor", anchor: .bottom)
+						}
 					}
 				}
 			}
@@ -453,7 +362,15 @@ struct ChannelMessageList: View {
 				destination: .channel(channel),
 				replyMessageId: $replyMessageId,
 				isFocused: $messageFieldFocused,
-				onMessageSent: { loadMessages(markReadAfterLoad: routerIsShowingThisChannel()) }
+				onMessageSent: {
+					let previousScrollRequest = bottomScrollRequest
+					loadMessages(markReadAfterLoad: routerIsShowingThisChannel())
+					if MessageScrollTracker.shouldFollowSend(
+						scrollRequestChangedDuringLoad: bottomScrollRequest != previousScrollRequest
+					) {
+						bottomScrollRequest &+= 1
+					}
+				}
 			)
 			.fixedSize(horizontal: false, vertical: true)
 		}
@@ -465,7 +382,7 @@ struct ChannelMessageList: View {
 		.toolbar {
 			ToolbarItem(placement: .principal) {
 				HStack {
-					CircleText(text: String(channel.index), color: .accentColor, circleSize: 44).fixedSize()
+					CircleText(text: String(channel.index), color: .accentFill, circleSize: 44).fixedSize()
 					Text(String(channel.name ?? "Unknown")).font(.headline)
 				}
 			}
@@ -540,8 +457,8 @@ private extension ChannelMessageList {
 		searchActor = actor
 		do {
 			let matches = try await actor.channelMatches(channelIndex: channel.index, query: query)
-			// Drop stale results if the query moved on while the background fetch ran.
-			guard query == searchQuery else { return }
+			// A query change or conversation switch can cancel us while the actor fetch runs.
+			guard !Task.isCancelled, query == searchQuery else { return }
 			searchMatches = matches
 			if matches.isEmpty {
 				currentMatchIndex = -1

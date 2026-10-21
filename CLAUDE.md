@@ -1,13 +1,53 @@
-<!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan:
-`specs/014-mesh-beacons/plan.md` (feature: Mesh Beacons).
-<!-- SPECKIT END -->
-
 ## Writing style
 
-Keep explanations, PR descriptions, and commit messages short and plain.
+Keep explanations, PR descriptions, code comments, and commit messages short and plain.
 Say what broke and what changed in ordinary words. No invented jargon,
 no dramatized debugging stories, no bold-lead bullet lists that read like
 marketing. Match how existing PRs in this repo are written (Summary /
 What changed / Testing). If there's nothing worth saying, say nothing.
+
+## Start with an issue
+
+Every pull request starts from an issue, so maintainers can review the idea
+before anyone spends time on it. Before writing code for a change, find or
+open an issue describing it, and wait until a maintainer adds the `approved`
+label; an idea that isn't on the roadmap may be turned down, and that's cheaper
+to learn before the work than after. Only bug reports (labeled `bug`) need no
+approval. Link the issue from the pull request's description with a closing
+keyword, `Fixes #123`. The "Linked issue" check fails a pull request without
+one; maintainers and bots are exempt.
+
+## Pull requests
+
+One change per pull request, based on `main`.
+
+Do not open stacked pull requests — a series where each one's base is the
+previous one's branch. They cannot be reviewed or merged independently: taking
+the third means taking the first two, the parts needing the most scrutiny sit
+furthest down the chain, and closing anything in the middle strands the rest.
+If a change only makes sense on top of another, wait for the first to merge and
+then open the second against `main`.
+
+Split work by what it does, not by how it was written. A bug fix that stands on
+its own goes in its own pull request, not at the bottom of a larger series.
+
+Keep a pull request small enough to review in one sitting. If it runs to
+thousands of lines across dozens of files, it is doing more than one thing.
+
+Describe the change in terms of what the app and the radio do. Parity with
+another client is a reason to want a change, not a description of one.
+
+## The connection status indicator
+
+`ConnectedDevice` is the small indicator in the top right of most screens: the
+radio's short name, the link icon, the MQTT icon and the RX/TX lights.
+
+It is full. Do not add controls to it, and do not add toolbar buttons beside it
+in `topBarTrailing`. The space is a status readout, not an action bar, and on a
+phone in the narrow width it is already close to overflowing — anything more
+either crowds the name or pushes the indicator off.
+
+New actions belong where the thing they act on lives: on the node's row or its
+detail screen, in a section on the relevant settings page, or in the Tools
+screen. If an action seems to need the top right of every screen, that is worth
+questioning rather than designing around.

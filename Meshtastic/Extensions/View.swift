@@ -11,6 +11,14 @@ extension View {
 	func onFirstAppear(_ action: @escaping () -> Void) -> some View {
 		modifier(FirstAppear(action: action))
 	}
+
+	/// A close button in the toolbar's cancel position, on every platform. A sheet can't be swiped
+	/// away on Mac or Vision Pro, so each one needs a way out it can show. Apply it to the root view
+	/// inside the sheet's `NavigationStack`; `action` replaces the plain dismiss when closing has
+	/// to do something first.
+	func sheetCloseButton(action: (() -> Void)? = nil) -> some View {
+		modifier(SheetCloseButton(action: action))
+	}
 	
 	@ViewBuilder func olderThanOS26( _ contentBuilder: (@escaping (Self) -> some View) ) -> some View {
 		if #available(iOS 26.0, macOS 26.0, *) {
@@ -45,6 +53,7 @@ extension View {
 			.controlSize(.large)
 			.padding(.horizontal)
 			.buttonStyle(.borderedProminent)
+			.tint(.accentFill)
 	}
 
 	@ViewBuilder
@@ -62,7 +71,28 @@ extension View {
 	@available(iOS 26.0, macOS 26.0, *)
 	@ViewBuilder
 	private func glassButtonStyleOS26() -> some View {
+		#if os(visionOS)
+		self.buttonStyle(.bordered)
+		#else
 		self.buttonStyle(.glass)
+		#endif
+	}
+}
+
+/// How a scroll dismisses the keyboard. Our own type because SwiftUI's `ScrollDismissesKeyboardMode`
+/// doesn't exist on visionOS, where there is no on-screen keyboard to dismiss.
+enum KeyboardScrollDismissal {
+	case immediately, interactively
+}
+
+extension View {
+	/// `.scrollDismissesKeyboard`, as a no-op on visionOS.
+	func dismissesKeyboardOnScroll(_ mode: KeyboardScrollDismissal = .immediately) -> some View {
+		#if os(visionOS)
+		self
+		#else
+		self.scrollDismissesKeyboard(mode == .immediately ? .immediately : .interactively)
+		#endif
 	}
 }
 
@@ -78,6 +108,24 @@ private struct FirstAppear: ViewModifier {
 			guard !hasAppeared else { return }
 			hasAppeared = true
 			action()
+		}
+	}
+}
+
+private struct SheetCloseButton: ViewModifier {
+	@Environment(\.dismiss) private var dismiss
+	let action: (() -> Void)?
+
+	func body(content: Content) -> some View {
+		content.toolbar {
+			ToolbarItem(placement: .cancellationAction) {
+				Button {
+					if let action { action() } else { dismiss() }
+				} label: {
+					Image(systemName: "xmark")
+				}
+				.accessibilityLabel(String(localized: "Close", comment: "VoiceOver: dismiss this sheet"))
+			}
 		}
 	}
 }

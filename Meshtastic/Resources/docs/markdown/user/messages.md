@@ -67,13 +67,18 @@ When you open or scan a Meshtastic channel link, review the listed channels and 
 | ![Favorites](../assets/screenshots/favorite.png) | **Favorites** — favorited contacts and nodes with recent messages appear at the top of the contact list. |
 | ![Long press](../assets/screenshots/longPress.png) | **Long Press Actions** — long press to favorite or mute the contact, or delete a conversation. |
 
+The contact list shows the contacts you can actually direct message. Nodes that report themselves as
+unmessagable, and nodes no public key has been received for, are left out — the radio would refuse to
+send to them. A contact you already have a conversation with stays in the list either way, so an
+existing thread is never hidden.
+
 ### Encryption
 
 ![Encryption legend](../assets/screenshots/lockLegend.png)
 
 | Icon | Meaning |
 |------|---------|
-| ![Shared Key](../assets/screenshots/lockOpen.png) | **Shared Key** — direct messages are using the shared key for the channel. |
+| ![No Public Key](../assets/screenshots/lockOpen.png) | **No Public Key** — no public key has been received for this node, so direct messages to it cannot be sent. Use **Exchange User Info** on the node to ask for one. |
 | ![Public Key Encryption](../assets/screenshots/lockClosed.png) | **Public Key Encryption** — direct messages use the public key infrastructure for encryption. Requires firmware 2.5 or later. |
 | ![PKI Mismatch](../assets/screenshots/keySlash.png) | **Public Key Mismatch** — the most recent public key for this node does not match the previously recorded key. Verify who you are messaging with by comparing public keys in person or over the phone. |
 
@@ -93,6 +98,8 @@ A green shield (🛡️) on a broadcast message bubble means the message is **si
 Long press any message and tap **Tapback** to send an emoji reaction.
 
 When someone reacts to a message, you get a notification such as **Alice reacted 👍 to "See you soon"** — unless the sender (for a direct message) or the channel is muted. Reactions notify **without** adding to the conversation's unread badge. If your radio hasn't seen the message that was reacted to, the reaction is saved but no notification is shown (there'd be nothing to display it against).
+
+Reaction alerts follow the same notification settings as the messages they react to: muting a channel, a sender, or channel message notifications silences their reactions too.
 
 ---
 
@@ -209,3 +216,24 @@ On Mac Catalyst, pressing **Enter** sends the message. Press **Shift+Enter** to 
 
 > **Tip — Message Limit**
 > Messages are limited to 200 bytes. Markdown delimiters count toward this limit (e.g., `**bold**` uses 4 extra bytes for the `**` pairs). The byte counter in the toolbar shows remaining space.
+
+---
+
+## @Mentions
+
+You can mention a specific node in any message by typing `@` followed by a name. An autocomplete list of known nodes appears, filterable by long name, short name, or user ID. Tap a row to insert the mention.
+
+### How mentions work
+
+When you select a node from the autocomplete list, the app inserts a mention token (`@!<hex-id>`) into the message. The hex ID is the node's numeric identifier, which stays stable even if the node's display name changes later. This format is shared with Android and Web clients so mentions resolve correctly on all platforms.
+
+### Reading mentions
+
+In received messages, mention tokens are automatically resolved to the node's current display name and rendered as tappable links. Tapping a mention navigates to that node's detail screen. The name updates live — if a node renames itself, existing messages show the new name immediately.
+
+### Mention notifications
+
+If a channel message mentions your own node (even on a muted channel), the app delivers a notification for that message. This ensures you are notified when someone addresses you directly in a group conversation.
+
+> **Tip — Mention format**
+> The mention token sent on the wire is `@!<hex-id>` (e.g. `@!deadbeef`). You can also type this token directly if you know the node's hex ID.
