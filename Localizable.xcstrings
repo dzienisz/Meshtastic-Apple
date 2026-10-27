@@ -934,6 +934,12 @@
             "value" : "Live Activity"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktywność na żywo"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -968,6 +974,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "No nodes to track yet"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Brak węzłów do śledzenia"
           }
         },
         "zh-Hant-TW" : {
@@ -1024,6 +1036,12 @@
             "value" : "Search nodes"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Szukaj węzłów"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1040,6 +1058,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Show"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pokaż"
           }
         },
         "zh-Hant-TW" : {
@@ -1096,6 +1120,12 @@
             "value" : "Start Live Activity"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rozpocznij Aktywność na żywo"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1112,6 +1142,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Stop Live Activity"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zatrzymaj Aktywność na żywo"
           }
         },
         "zh-Hant-TW" : {
@@ -1150,6 +1186,12 @@
             "value" : "Switch Live Activity"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zmień Aktywność na żywo"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1186,6 +1228,12 @@
             "value" : "Track a Node"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Śledź węzeł"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1204,6 +1252,12 @@
             "value" : "Tracking %@"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Śledzenie: %@"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1220,6 +1274,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Tracking a node"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Śledzenie węzła"
           }
         },
         "zh-Hant-TW" : {
@@ -1292,6 +1352,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Updates until %@. iOS stops a Live Activity after 8 hours."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktualizacje do %@. iOS kończy Aktywność na żywo po 8 godzinach."
           }
         },
         "zh-Hant-TW" : {
@@ -1635,6 +1701,12 @@
     "Allow Meshtastic to send you notifications for messages, node events, and critical alerts. You can update notification permissions at any time from settings." : {
       "extractionState" : "manual",
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pozwól aplikacji Meshtastic wysyłać powiadomienia o wiadomościach, zdarzeniach węzłów i alertach krytycznych. Uprawnienia do powiadomień możesz w każdej chwili zmienić w ustawieniach."
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1712,6 +1784,12 @@
     "Background Connections" : {
       "extractionState" : "manual",
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Połączenia w tle"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1723,6 +1801,12 @@
     "Background network connections are not supported and may disconnect when you leave the app." : {
       "extractionState" : "manual",
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Połączenia sieciowe w tle nie są obsługiwane i mogą zostać przerwane po wyjściu z aplikacji."
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1800,6 +1884,12 @@
     "Bluetooth Connected Nodes" : {
       "extractionState" : "manual",
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Węzły połączone przez Bluetooth"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1811,6 +1901,12 @@
     "Bluetooth Low Energy supports background connections. When possible, the application will remain connected to these accessories while the app is in the background." : {
       "extractionState" : "manual",
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bluetooth Low Energy obsługuje połączenia w tle. Gdy to możliwe, aplikacja pozostanie połączona z tymi akcesoriami, nawet gdy działa w tle."
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1877,6 +1973,12 @@
     "Bytes" : {
       "extractionState" : "manual",
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bajty"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -2502,6 +2604,12 @@
     "For the best connection experience, minimum firmware version 2.7.4 is required." : {
       "extractionState" : "manual",
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Do najlepszego działania połączenia wymagany jest firmware w wersji co najmniej 2.7.4."
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -3067,6 +3175,12 @@
     "Meshtastic accesses your local network to connect to TCP-based accessories.  You can update the local network permissions at any time from settings." : {
       "extractionState" : "manual",
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Meshtastic korzysta z sieci lokalnej, aby łączyć się z akcesoriami przez TCP. Uprawnienia do sieci lokalnej możesz w każdej chwili zmienić w ustawieniach."
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -3078,6 +3192,12 @@
     "Meshtastic supports Siri, Shortcuts, and CarPlay so you can send and receive messages hands-free. You can update Siri permissions at any time from settings." : {
       "extractionState" : "manual",
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Meshtastic obsługuje Siri, Skróty i CarPlay, dzięki czemu możesz wysyłać i odbierać wiadomości bez użycia rąk. Uprawnienia Siri możesz w każdej chwili zmienić w ustawieniach."
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -3089,6 +3209,12 @@
     "Meshtastic uses Bluetooth to connect to BLE-based accessories.  You can update the permissions at any time from settings." : {
       "extractionState" : "manual",
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Meshtastic używa Bluetooth do łączenia się z akcesoriami BLE. Uprawnienia możesz w każdej chwili zmienić w ustawieniach."
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -6115,6 +6241,12 @@
     "Minimum Firmware Version" : {
       "extractionState" : "manual",
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Minimalna wersja firmware"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -6236,6 +6368,12 @@
     "Network-based Nodes" : {
       "extractionState" : "manual",
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Węzły sieciowe"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -7437,6 +7575,12 @@
     "The Meshtastic App can connect to and manage network-enabled nodes." : {
       "extractionState" : "manual",
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aplikacja Meshtastic może łączyć się z węzłami sieciowymi i nimi zarządzać."
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -7448,6 +7592,12 @@
     "The most reliable messaging experience is with Bluetooth Low Energy connected nodes." : {
       "extractionState" : "manual",
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Najbardziej niezawodne przesyłanie wiadomości zapewniają węzły połączone przez Bluetooth Low Energy."
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -8113,6 +8263,12 @@
             "value" : "Schalte mein Meshtastic-Node aus oder starte ihn neu."
           }
         },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“Apaga mi nodo Meshtastic\" or \"Reinicia mi nodo Meshtastic\"."
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -8137,6 +8293,12 @@
             "value" : "“내 Meshtastic 노드 종료” 또는 “내 Meshtastic 노드 재시작”"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "„Wyłącz mój węzeł Meshtastic” lub „Uruchom ponownie mój węzeł Meshtastic”."
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -8159,12 +8321,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "「關閉我的 Meshtastic 節點」或「重新啟動我的 Meshtastic 節點」。"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "“Apaga mi nodo Meshtastic\" or \"Reinicia mi nodo Meshtastic\"."
           }
         }
       }
@@ -10000,6 +10156,12 @@
             "value" : "%@ Información del evento"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Informacje o wydarzeniu %@"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -10014,6 +10176,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ Ha terminado. Actualice su nodo al último firmware estable."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wydarzenie %@ się zakończyło. Zaktualizuj węzeł do najnowszego stabilnego firmware."
           }
         },
         "zh-Hant-TW" : {
@@ -16535,6 +16703,12 @@
             "value" : "SNR: %@ dB"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "SNR potwierdzenia: %@ dB"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -16621,6 +16795,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "응답 시간: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Czas potwierdzenia: %@"
           }
         },
         "pt-BR" : {
@@ -17285,6 +17465,12 @@
             "value" : "Agregar y Responder con el mío"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dodaj i odeślij mój"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -17663,6 +17849,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Agregar conserva la configuración LoRa del receptor y añade los canales seleccionados."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dodaj zachowuje ustawienia LoRa odbiorcy i dodaje wybrane kanały."
           }
         },
         "zh-Hant-TW" : {
@@ -19543,6 +19735,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "알림"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alert"
           }
         },
         "pt-BR" : {
@@ -21969,6 +22167,12 @@
             "value" : "앱 알림"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Powiadomienia aplikacji"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -22239,6 +22443,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Aplica colores de resaltado de eventos en toda la aplicación y las fuentes disponibles en esta hoja. Los fondos de navegación estándar permanecen sin cambios."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stosuje kolory wyróżnień wydarzenia w całej aplikacji oraz dostępne czcionki w tym arkuszu. Standardowe tła nawigacji pozostają bez zmian."
           }
         },
         "zh-Hant-TW" : {
@@ -22686,6 +22896,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "이 메시지를 삭제하시겠습니까?"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Czy na pewno chcesz usunąć tę wiadomość?"
           }
         },
         "pt-BR" : {
@@ -26029,6 +26245,12 @@
             "value" : "Bluetooth 연결 설정"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Łączność Bluetooth"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -26093,16 +26315,22 @@
     "Bluetooth is off" : {
       "comment" : "Connect tab: title shown in Available Radios when the BLE transport reports Bluetooth is powered off (#2175)",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bluetooth está apagado"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bluetooth 꺼짐"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bluetooth está apagado"
+            "state" : "needs_review",
+            "value" : "Bluetooth jest wyłączony"
           }
         },
         "zh-Hant-TW" : {
@@ -26116,16 +26344,22 @@
     "Bold" : {
       "comment" : "VoiceOver: bold formatting toolbar button",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Negrita"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "굵게"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Negrita"
+            "state" : "needs_review",
+            "value" : "Pogrubienie"
           }
         },
         "zh-Hant-TW" : {
@@ -27019,6 +27253,12 @@
             "value" : "사용 바이트 수"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Użyte bajty"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -27366,16 +27606,22 @@
     "Cancel reply" : {
       "comment" : "VoiceOver: cancel replying to a message",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelar respuesta"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "응답 취소"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cancelar respuesta"
+            "state" : "needs_review",
+            "value" : "Anuluj odpowiedź"
           }
         },
         "zh-Hant-TW" : {
@@ -27808,6 +28054,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "CarPlay 메시지"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wiadomości w CarPlay"
           }
         },
         "pt-BR" : {
@@ -30961,16 +31213,22 @@
     "Channels, %lld unread" : {
       "comment" : "VoiceOver: Channels section with unread message count",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Canales, %lld sin leer"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "채널, 안 읽은 매시지 %lld개"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Canales, %lld sin leer"
+            "state" : "needs_review",
+            "value" : "Kanały, nieprzeczytane: %lld"
           }
         },
         "zh-Hant-TW" : {
@@ -31895,6 +32153,12 @@
             "value" : "번역 초기화"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usuń tłumaczenie"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -31930,10 +32194,22 @@
     "Clears all active contact filters." : {
       "comment" : "VoiceOver hint for the reset contact filters button",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Borrar rutas rastreadas."
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "활성 연락처 필터를 모두 지웁니다."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Czyści wszystkie aktywne filtry kontaktów."
           }
         },
         "uk" : {
@@ -31946,12 +32222,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "清除所有使用中的聯絡人篩選條件。"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Borrar rutas rastreadas."
           }
         }
       }
@@ -32698,16 +32968,22 @@
     "Code" : {
       "comment" : "VoiceOver: inline code formatting toolbar button",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Código"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "코드"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Código"
+            "state" : "needs_review",
+            "value" : "Kod"
           }
         },
         "zh-Hant-TW" : {
@@ -34798,6 +35074,12 @@
             "value" : "연결된 장치의 펌웨어: **%@**"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Firmware podłączonego urządzenia: **%@**"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -35295,6 +35577,12 @@
             "value" : "연결 시도 %1$lld / %2$lld회"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Próba połączenia %1$lld z %2$lld"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -35363,6 +35651,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "연결 이름"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nazwa połączenia"
           }
         },
         "pt-BR" : {
@@ -35516,6 +35810,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Contacto"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontakt"
           }
         },
         "zh-Hant-TW" : {
@@ -35718,6 +36018,12 @@
             "value" : "계속하기"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontynuuj"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -35791,6 +36097,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "지속적인 위치 업데이트"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ciągłe aktualizacje lokalizacji"
           }
         },
         "pt-BR" : {
@@ -36872,6 +37184,12 @@
             "value" : "No se pudo compartir"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie udało się udostępnić"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -37475,6 +37793,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "긴급 알림"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alerty krytyczne"
           }
         },
         "pt-BR" : {
@@ -39594,6 +39918,12 @@
             "value" : "메시지 삭제"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usuń wiadomość"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -39680,6 +40010,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "메시지 삭제"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usuń wiadomości"
           }
         },
         "pt-BR" : {
@@ -40407,6 +40743,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "상세 정보..."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Szczegóły…"
           }
         },
         "pt-BR" : {
@@ -41897,6 +42239,12 @@
             "value" : "El dispositivo está en la compilación del evento"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Urządzenie ma wersję firmware wydarzenia"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -43229,16 +43577,22 @@
     "Direct Messages, %lld unread" : {
       "comment" : "VoiceOver: Direct Messages section with unread message count",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mensajes directos, %lld sin leer"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "개인 메시지, %lld개 읽지 않음"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mensajes directos, %lld sin leer"
+            "state" : "needs_review",
+            "value" : "Wiadomości bezpośrednie, nieprzeczytane: %lld"
           }
         },
         "zh-Hant-TW" : {
@@ -44317,6 +44671,12 @@
             "value" : "위치 정보가 있는 다른 Meshtastic 노드와 휴대폰 사이의 거리를 표시합니다."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pokazuj odległość między telefonem a innymi węzłami Meshtastic, które mają pozycję."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -44712,6 +45072,12 @@
             "value" : "거리 필터"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Filtry odległości"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -44792,6 +45158,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "거리 측정"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pomiary odległości"
           }
         },
         "pt-BR" : {
@@ -47041,16 +47413,22 @@
     "Emoji picker" : {
       "comment" : "VoiceOver: open the character/emoji picker",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "selector de emojis"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "이모지 선택기"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "selector de emojis"
+            "state" : "needs_review",
+            "value" : "Wybór emoji"
           }
         },
         "zh-Hant-TW" : {
@@ -48028,6 +48406,12 @@
             "value" : "Mesh 지도에 휴대폰의 파란색 위치 점을 표시합니다."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Włącza niebieską kropkę lokalizacji telefonu na mapie sieci."
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -48627,6 +49011,12 @@
             "value" : "Los canales cifrados incluyen su clave secreta. Envíalos únicamente a personas de tu confianza."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zaszyfrowane kanały zawierają swój tajny klucz. Wysyłaj je tylko zaufanym osobom."
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -48857,6 +49247,12 @@
             "value" : "Discrepancia en la clave de cifrado"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Niezgodny klucz szyfrowania"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -49009,6 +49405,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "호스트명[:포트] 입력"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wpisz nazwę hosta[:port]"
           }
         },
         "pt-BR" : {
@@ -49305,6 +49707,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "선택한 텍스트에 연결할 URL을 입력하세요."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wpisz adres URL dla zaznaczonego tekstu"
           }
         },
         "pt-BR" : {
@@ -50645,6 +51053,12 @@
             "value" : "Firmware de evento"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Firmware wydarzenia"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -50738,6 +51152,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Los metadatos del evento enumeran una compilación diferente."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Metadane wydarzenia podają inną wersję"
           }
         },
         "zh-Hant-TW" : {
@@ -52401,6 +52821,12 @@
             "value" : "즐겨찾기"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ulubiony"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -53124,6 +53550,12 @@
             "value" : "휴대폰과의 거리에 따라 노드 목록과 메시 맵을 필터링합니다."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Filtruj listę węzłów i mapę sieci według odległości od telefonu."
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -53210,6 +53642,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "연락처 찾기"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Znajdź kontakt"
           }
         },
         "pt-BR" : {
@@ -53666,6 +54104,12 @@
             "value" : "El firmware %1$@ ya no es compatible. Se requiere la versión %2$@ o posterior para utilizar la aplicación. La radio permanece conectada para que puedas actualizarla aquí."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Firmware %1$@ nie jest już obsługiwany. Do korzystania z aplikacji wymagana jest wersja %2$@ lub nowsza. Radio pozostaje połączone, więc możesz je tutaj zaktualizować."
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -53691,6 +54135,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Edición de firmware"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Edycja firmware"
           }
         },
         "zh-Hant-TW" : {
@@ -53802,6 +54252,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Los paquetes de firmware no se instalan desde la fuente de metadatos del evento. Las actualizaciones utilizan el flujo de trabajo de firmware verificado de la aplicación."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pakiety firmware nie są instalowane z metadanych wydarzenia. Aktualizacje korzystają ze sprawdzonego procesu aktualizacji firmware w aplikacji."
           }
         },
         "zh-Hant-TW" : {
@@ -53938,6 +54394,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "펌웨어 업데이트 문서"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dokumentacja aktualizacji firmware"
           }
         },
         "pt-BR" : {
@@ -59037,6 +59499,12 @@
             "value" : "알림 숨기기"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ukryj alerty"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -59107,16 +59575,22 @@
     "Hide contact filters" : {
       "comment" : "VoiceOver label for the contact filter toggle button when filters are showing",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ocultar filtros de contacto"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "연락처 필터 숨기기"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ocultar filtros de contacto"
+            "state" : "needs_review",
+            "value" : "Ukryj filtry kontaktów"
           }
         },
         "zh-Hant-TW" : {
@@ -60125,6 +60599,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "홉 수 %d"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Liczba skoków: %d"
           }
         },
         "pt-BR" : {
@@ -61211,6 +61691,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "업데이트 방법"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Jak zaktualizować"
           }
         },
         "pt-BR" : {
@@ -63488,6 +63974,12 @@
             "value" : "Procedimiento de importación"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sposób importu"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -64243,6 +64735,12 @@
             "value" : "받은 메시지"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wiadomości przychodzące"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -64929,6 +65427,12 @@
             "value" : "삽입"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wstaw"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -64999,6 +65503,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "링크 삽입"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wstaw link"
           }
         },
         "pt-BR" : {
@@ -65428,16 +65938,22 @@
     "Italic" : {
       "comment" : "VoiceOver: italic formatting toolbar button",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cursiva"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "이텔릭"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cursiva"
+            "state" : "needs_review",
+            "value" : "Kursywa"
           }
         },
         "zh-Hant-TW" : {
@@ -65932,6 +66448,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "메시 맵을 최신 상태로 유지하고 다른 앱을 사용하는 동안에도 위치 정보를 메시 네트워크로 전송합니다."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktualizuj mapę sieci i wysyłaj swoją pozycję do sieci także podczas korzystania z innych aplikacji."
           }
         },
         "pt-BR" : {
@@ -66610,6 +67132,12 @@
             "value" : "마지막으로 확인된 장치:"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ostatnio widziane urządzenie:"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -66684,6 +67212,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "마지막으로 확인된 장치: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ostatnio widziane urządzenie: %@"
           }
         },
         "pt-BR" : {
@@ -68167,6 +68701,12 @@
             "value" : "Enlaces"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Linki"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -68337,6 +68877,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "이전 메시지 불러오기"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wczytaj wcześniejsze wiadomości"
           }
         },
         "pt-BR" : {
@@ -68930,6 +69476,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "로컬 네트워크 접근"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dostęp do sieci lokalnej"
           }
         },
         "pt-BR" : {
@@ -71556,6 +72108,12 @@
             "value" : "배터리 잔량 부족"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Niski poziom baterii"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -72067,6 +72625,12 @@
             "value" : "수동"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ręcznie"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -72160,6 +72724,12 @@
             "value" : "수동 연결 문자열"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ręczny adres połączenia"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -72240,6 +72810,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "수동 연결"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Połączenia ręczne"
           }
         },
         "pt-BR" : {
@@ -72997,16 +73573,22 @@
     "Match %lld of %lld" : {
       "comment" : "VoiceOver: current match position out of the total match count",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coincidencia %lld de %lld"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "일치 항목 %lld개 중 %lld번째"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Coincidencia %lld de %lld"
+            "state" : "needs_review",
+            "value" : "Wynik %1$lld z %2$lld"
           }
         },
         "zh-Hant-TW" : {
@@ -73694,6 +74276,12 @@
             "value" : "메시 맵 취이"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lokalizacja na mapie sieci"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -74219,6 +74807,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Meshtastic은 여러 기능을 제공하기 위해 휴대폰의 위치 정보를 사용합니다. 위치 권한은 언제든지 설정에서 변경할 수 있습니다."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Meshtastic używa lokalizacji telefonu do obsługi wielu funkcji. Uprawnienia do lokalizacji możesz w każdej chwili zmienić w ustawieniach."
           }
         },
         "pt-BR" : {
@@ -93416,16 +94010,22 @@
     "Message from %@: %@" : {
       "comment" : "VoiceOver: label for a received message. First value is the sender, second is the message text",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mensaje de %@: %@"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "보낸 사람: %@, 메시지: %@"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mensaje de %@: %@"
+            "state" : "needs_review",
+            "value" : "Wiadomość od %1$@: %2$@"
           }
         },
         "zh-Hant-TW" : {
@@ -93575,6 +94175,12 @@
             "value" : "메시지 크기"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rozmiar wiadomości"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -93622,16 +94228,22 @@
     "Message status" : {
       "comment" : "VoiceOver label for the message delivery status button",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Estado del mensaje"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "메시지 상태"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Estado del mensaje"
+            "state" : "needs_review",
+            "value" : "Stan wiadomości"
           }
         },
         "zh-Hant-TW" : {
@@ -95929,16 +96541,22 @@
     "Muted" : {
       "comment" : "VoiceOver: channel notifications are muted",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Silenciado"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "음소거됨"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Silenciado"
+            "state" : "needs_review",
+            "value" : "Wyciszony"
           }
         },
         "zh-Hant-TW" : {
@@ -97184,6 +97802,12 @@
             "value" : "새 노드"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nowe węzły"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -97303,16 +97927,22 @@
     "Next match" : {
       "comment" : "VoiceOver label for the next search match button",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Siguiente coincidencia"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "다음 일치 항목"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Siguiente coincidencia"
+            "state" : "needs_review",
+            "value" : "Następny wynik"
           }
         },
         "zh-Hant-TW" : {
@@ -98637,16 +99267,22 @@
     "No matches" : {
       "comment" : "Visible search match-count label: no matches found\nVoiceOver: no search matches found",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No hay coincidencias"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "일치 항목 없음"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "No hay coincidencias"
+            "state" : "needs_review",
+            "value" : "Brak wyników"
           }
         },
         "zh-Hant-TW" : {
@@ -99205,6 +99841,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sin radio reciente"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Brak ostatniego radia"
           }
         },
         "zh-Hant-TW" : {
@@ -101214,6 +101856,12 @@
             "value" : "No cifrado"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Niezaszyfrowany"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -101602,6 +102250,12 @@
             "value" : "채널 메시지 및 다이렉트 메시지에 알림입니다."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Powiadomienia o wiadomościach na kanałach i bezpośrednich."
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -101684,6 +102338,12 @@
             "value" : "연결된 기기의 배터리 잔량 부족 알림입니다."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Powiadomienia o niskim poziomie baterii podłączonego urządzenia."
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -101764,6 +102424,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "새로 발견된 노드 알림입니다."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Powiadomienia o nowo wykrytych węzłach."
           }
         },
         "pt-BR" : {
@@ -103730,6 +104396,12 @@
             "value" : "Abre Meshtastic y conéctate una vez. Podrás compartir más tarde, aunque estés desconectado."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otwórz Meshtastic i połącz się raz. Później możesz udostępniać bez połączenia."
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -104093,16 +104765,22 @@
     "Opens Settings" : {
       "comment" : "VoiceOver hint: tapping the Bluetooth-is-off row in Connect opens the Settings app (#2175)",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abre la configuración"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "설정 앱을 엽니다"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Abre la configuración"
+            "state" : "needs_review",
+            "value" : "Otwiera Ustawienia"
           }
         },
         "zh-Hant-TW" : {
@@ -106875,6 +107553,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "스마트폰 위치"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lokalizacja telefonu"
           }
         },
         "pt-BR" : {
@@ -110873,16 +111557,22 @@
     "Previous match" : {
       "comment" : "VoiceOver label for the previous search match button",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coincidencia anterior"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "이전 일치 항목"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Coincidencia anterior"
+            "state" : "needs_review",
+            "value" : "Poprzedni wynik"
           }
         },
         "zh-Hant-TW" : {
@@ -113228,16 +113918,22 @@
     "Reaction %@ from %@" : {
       "comment" : "VoiceOver: a single emoji reaction and who sent it. First value is the emoji, second is the sender",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reacción %@ de %@"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "%2$@의 반응: %1$@"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Reacción %@ de %@"
+            "state" : "needs_review",
+            "value" : "Reakcja %1$@ od %2$@"
           }
         },
         "zh-Hant-TW" : {
@@ -113308,6 +114004,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "CarPlay를 통해 차량 디스플레이에서 Meshtastic 채널 메시지와 다이렉트 메시지를 직접 읽고 답장할 수 있습니다."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Czytaj wiadomości z kanałów i bezpośrednie Meshtastic oraz odpowiadaj na nie prosto z ekranu samochodu dzięki CarPlay."
           }
         },
         "pt-BR" : {
@@ -114310,6 +115012,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "권장 보안 버전: **%@**"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zalecana bezpieczna wersja: **%@**"
           }
         },
         "pt-BR" : {
@@ -116222,6 +116930,12 @@
             "value" : "La opción Reemplazar coincide con el valor predeterminado de la aplicación Meshtastic e incluye la configuración radio de LoRa."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zastąp działa jak domyślnie w aplikacji Meshtastic i zawiera ustawienia LoRa radia."
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -116357,16 +117071,22 @@
     "Replying to: %@" : {
       "comment" : "VoiceOver: button that jumps to the quoted message being replied to. %@ is the quoted text",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Respondiendo a: %@"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "답장 중: %@"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Respondiendo a: %@"
+            "state" : "needs_review",
+            "value" : "Odpowiedź na: %@"
           }
         },
         "zh-Hant-TW" : {
@@ -117042,10 +117762,22 @@
     "Reset contact filters" : {
       "comment" : "VoiceOver label for the reset contact filters button",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restablecer filtros de contacto"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "연락처 필터 초기화"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Resetuj filtry kontaktów"
           }
         },
         "uk" : {
@@ -117058,12 +117790,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "重設聯絡人篩選"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Restablecer filtros de contacto"
           }
         }
       }
@@ -117954,6 +118680,12 @@
             "value" : "노드 불러오는 중..."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pobieranie węzłów . ."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -118030,6 +118762,12 @@
             "value" : "노드 불러오는 중"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pobieranie węzłów"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -118104,6 +118842,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld개의 노드를 불러오는 중"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pobieranie węzłów %lld"
           }
         },
         "pt-BR" : {
@@ -118339,6 +119083,12 @@
             "value" : "다시 시도 중 (%@번째 시도)"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ponawianie (próba %@)"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -118407,6 +119157,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "다시 시도 중 (%lld번째 시도)"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ponawianie (próba %lld)"
           }
         },
         "pt-BR" : {
@@ -118513,6 +119269,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Reseña en Meshtastic"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przejrzyj w Meshtastic"
           }
         },
         "zh-Hant-TW" : {
@@ -123032,6 +123794,12 @@
             "value" : "보안 권고"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Komunikat bezpieczeństwa"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -123280,6 +124048,12 @@
             "value" : "보안 업데이트 권장"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zalecana aktualizacja zabezpieczeń"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -123365,6 +124139,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "채널 선택"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wybierz kanał"
           }
         },
         "pt-BR" : {
@@ -123455,6 +124235,12 @@
             "value" : "대화 선택"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wybierz rozmowę"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -123541,6 +124327,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "대화 유형 선택"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wybierz rodzaj rozmowy"
           }
         },
         "pt-BR" : {
@@ -124176,6 +124968,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "중요로 표시된 패킷은 OS 알림 센터의 음소거 스위치와 방해 금지 설정을 무시합니다."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wybrane pakiety wysłane jako krytyczne zignorują przełącznik wyciszenia i tryb Nie przeszkadzać w centrum powiadomień systemu."
           }
         },
         "pt-BR" : {
@@ -125281,6 +126079,12 @@
             "value" : "Enviar Tarjeta para Añadir"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wyślij kartę Dodaj"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -125620,6 +126424,12 @@
             "value" : "Enviar Intercambio de Contacto"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wyślij wymianę kontaktów"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -125755,16 +126565,22 @@
     "Send message" : {
       "comment" : "VoiceOver: send the composed message",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enviar mensaje"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "메시지 전송"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Enviar mensaje"
+            "state" : "needs_review",
+            "value" : "Wyślij wiadomość"
           }
         },
         "zh-Hant-TW" : {
@@ -125811,6 +126627,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "알림 보내기"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wysyłaj powiadomienia"
           }
         },
         "pt-BR" : {
@@ -125954,6 +126776,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enviar Tarjeta para Reemplazar"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wyślij kartę Zastąp"
           }
         },
         "zh-Hant-TW" : {
@@ -129170,6 +129998,12 @@
             "value" : "위치 공유"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Udostępniaj lokalizację"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -130082,6 +130916,12 @@
             "value" : "알림 표시"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pokaż alerty"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -130152,16 +130992,22 @@
     "Show contact filters" : {
       "comment" : "VoiceOver label for the contact filter toggle button when filters are hidden",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostrar filtros de contacto"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "연락처 필터 표시"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mostrar filtros de contacto"
+            "state" : "needs_review",
+            "value" : "Pokaż filtry kontaktów"
           }
         },
         "zh-Hant-TW" : {
@@ -130721,6 +131567,12 @@
             "value" : "원문 보기"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pokaż oryginał"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -130831,6 +131683,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "번역 보기"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pokaż tłumaczenie"
           }
         },
         "pt-BR" : {
@@ -131286,6 +132144,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "노드 종료 / 재시작"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wyłącz / uruchom ponownie węzeł"
           }
         },
         "pt-BR" : {
@@ -132541,6 +133405,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Siri, 단축어 및 CarPlay"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Siri, Skróty i CarPlay"
           }
         },
         "pt-BR" : {
@@ -135060,6 +135930,12 @@
       "comment" : "A tab for displaying stickers.",
       "isCommentAutoGenerated" : true,
       "localizations" : {
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Naklejki"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -135550,16 +136426,22 @@
     "Strikethrough" : {
       "comment" : "VoiceOver: strikethrough formatting toolbar button",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tachado"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "취소선"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tachado"
+            "state" : "needs_review",
+            "value" : "Przekreślenie"
           }
         },
         "zh-Hant-TW" : {
@@ -136015,6 +136897,12 @@
             "value" : "Intercambiar contactos de Mesh"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wymień kontakty mesh"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -136161,10 +137049,22 @@
     },
     "Switching Radio" : {
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cambiando Radio"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "노드 전환 중"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przełączanie radia"
           }
         },
         "uk" : {
@@ -136177,12 +137077,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "切換無線電"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cambiando Radio"
           }
         }
       }
@@ -136996,6 +137890,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "탭하여 이모지를 입력합니다"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stuknij, aby wpisać emoji"
           }
         },
         "pt-BR" : {
@@ -141352,6 +142252,12 @@
             "value" : "이 연락처의 공개 키에 문제가 있습니다."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wystąpił problem z kluczem publicznym tego kontaktu."
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -142002,6 +142908,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "이 대화는 삭제됩니다."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ta rozmowa zostanie usunięta."
           }
         },
         "pt-BR" : {
@@ -143037,6 +143949,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Esta instantánea tiene más de 30 días de antigüedad."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ta migawka ma ponad 30 dni."
           }
         },
         "zh-Hant-TW" : {
@@ -146461,6 +147379,12 @@
             "value" : "번역"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przetłumacz"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -147312,16 +148236,22 @@
     "Turn on Bluetooth in Settings to see nearby radios." : {
       "comment" : "Connect tab: subtitle shown in Available Radios when the BLE transport reports Bluetooth is powered off (#2175)",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activa Bluetooth en Ajustes para ver las radios cercanas."
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "근처 노드를 보려면 설정에서 Bluetooth를 켜세요."
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Activa Bluetooth en Ajustes para ver las radios cercanas."
+            "state" : "needs_review",
+            "value" : "Włącz Bluetooth w Ustawieniach, aby zobaczyć pobliskie radia."
           }
         },
         "zh-Hant-TW" : {
@@ -147829,6 +148759,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "즐겨찾기 해제"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usuń z ulubionych"
           }
         },
         "pt-BR" : {
@@ -148989,6 +149925,12 @@
             "value" : "Actualizar el firmware"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zaktualizuj firmware"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -149505,6 +150447,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Las actualizaciones utilizan el flujo de trabajo de firmware verificado de la aplicación."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktualizacje korzystają ze sprawdzonego procesu aktualizacji firmware w aplikacji."
           }
         },
         "zh-Hant-TW" : {
@@ -150703,6 +151651,12 @@
             "value" : "Usar tema de evento"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Użyj motywu wydarzenia"
+          }
+        },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
@@ -151098,6 +152052,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "노드의 하드웨어 GPS 대신 휴대폰 GPS를 사용하여 위치 정보를 노드로 전송합니다."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Używaj GPS telefonu do wysyłania lokalizacji do węzła zamiast sprzętowego GPS w węźle."
           }
         },
         "pt-BR" : {
@@ -152741,22 +153701,28 @@
             "value" : "Verified with the sender's key."
           }
         },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verificado con la clave del remitente."
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "발신자의 키로 확인되었습니다."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zweryfikowano kluczem nadawcy."
+          }
+        },
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Перевірено ключем відправника."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Verificado con la clave del remitente."
           }
         },
         "zh-Hant-TW" : {
@@ -152954,6 +153920,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Versión"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wersja"
           }
         },
         "zh-Hant-TW" : {
@@ -155589,6 +156561,12 @@
             "value" : "Wi-Fi 설정"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Konfiguracja Wi-Fi"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -156835,6 +157813,12 @@
             "value" : "어제"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wczoraj"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -157073,16 +158057,22 @@
     "You sent: %@" : {
       "comment" : "VoiceOver: label for a message you sent. %@ is the message text",
       "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Has enviado: %@"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "보냄: %@"
           }
         },
-        "es" : {
+        "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Has enviado: %@"
+            "state" : "needs_review",
+            "value" : "Wysłano przez Ciebie: %@"
           }
         },
         "zh-Hant-TW" : {
@@ -157209,6 +158199,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "연결된 장치가 알려진 보안 취약점을 포함한 **%@**보다 이전 버전의 펌웨어를 실행하고 있습니다. 장치와 메시 네트워크를 보호하려면 펌웨어 업데이트를 강력히 권장합니다."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Podłączone urządzenie ma firmware starszy niż **%@**, który zawiera znane luki bezpieczeństwa. Zdecydowanie zalecamy aktualizację firmware, aby chronić urządzenie i sieć mesh."
           }
         },
         "pt-BR" : {
@@ -157959,6 +158955,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tu identidad pública y tu clave provienen de la radio conectada más reciente. El destinatario puede agregarte y enviarte la suya."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Twoja publiczna tożsamość i klucz pochodzą z ostatnio połączonego radia. Odbiorca może Cię dodać i odesłać swoje."
           }
         },
         "zh-Hant-TW" : {
